@@ -16,7 +16,8 @@ const pick = name => {
 const MAP = pick("MAP");
 const ITEM_SPOTS = pick("ITEM_SPOTS");
 const MW = MAP[0].length, MH = MAP.length;
-const SOLID = "#SCT";
+const SOLID = "#SCT^v<>"; // ^ v < > はロッカー(扉の向き)
+const LOCKER_DIRS = { "^": [0, -1], "v": [0, 1], "<": [-1, 0], ">": [1, 0] };
 const tileAt = (x, y) => (x < 0 || y < 0 || x >= MW || y >= MH) ? "#" : MAP[y][x];
 
 let ok = true;
@@ -59,6 +60,17 @@ for (const [kind, x, y] of ITEM_SPOTS) {
   else if (!seen.has(x + "," + y)) fail(`${kind}(列${x} 行${y})に行けない`);
 }
 
+// ロッカーの扉の前が床で、たどり着けるか(扉の前に立って開け閉めするため)
+let lockers = 0;
+for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+  const d = LOCKER_DIRS[tileAt(x, y)];
+  if (!d) continue;
+  lockers++;
+  const fx = x + d[0], fy = y + d[1];
+  if (tileAt(fx, fy) !== ".") fail(`ロッカー(列${x} 行${y})の扉の前(列${fx} 行${fy})が床じゃない`);
+  else if (!seen.has(fx + "," + fy)) fail(`ロッカー(列${x} 行${y})の扉の前に行けない`);
+}
+
 // 壁のすき間(通路)が、両側の部屋にちゃんとつながっているか
 // 横の壁にあいたすき間(左右が # で長さ3マス以下)は、上と下の両方に出られないといけない。
 // たての壁のすき間も同じで、左と右の両方に出られないといけない。入り口(F・B)は店の中側だけ調べる。
@@ -95,5 +107,5 @@ function checkGaps(horizontal) {
 checkGaps(true);
 checkGaps(false);
 
-if (ok) console.log(`OK: 表の入り口から ${seen.size} マス全部に行けます(品物 ${ITEM_SPOTS.length} 個、壁のすき間もすべてOK)`);
+if (ok) console.log(`OK: 表の入り口から ${seen.size} マス全部に行けます(品物 ${ITEM_SPOTS.length} 個、ロッカー ${lockers} 個、壁のすき間もすべてOK)`);
 process.exit(ok ? 0 : 1);

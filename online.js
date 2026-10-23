@@ -6,7 +6,9 @@
      round:   ラウンドごとの番号(ラウンドが変わるたびに変わる)、no: 何ラウンド目か
      boss:    店長の人のID(match.order[no])
      players: { 人のID: { name, i: 入った順, cpu: CPUなら true } } … この試合に出ている人(CPUは泥棒だけ)
+     spots:   { i0: "safe,17,13", … }           … 品物の種類と場所(ラウンドごとにホストがランダムに決める)
      items:   { i0: true, i1: true, … }          … 残っている品物(取られたら消える)
+     lockers: { L0: { o: 開いているか, w: 中にいる泥棒のID } } … ロッカー(書いていないロッカーは閉まっていて空)
      pos:     { 人のID: { x, y, f: 向き, in: 店に入ったか, h: 隠れているか, g: 盗む長押しの進み具合,
                           c: 手持ち("meat,wine" のように), b: 持ち出した点数, fl: 小麦粉, dg: 変装中 } }
      caught:  { 人のID: true か "police" }       … 捕まった泥棒(true = 店長、"police" = 警察)
@@ -35,6 +37,16 @@ const roomPathOf = () => "rooms/gr-" + S.code;
 const gamePath = () => roomPathOf() + "/game";
 const isHost = () => !!(S && room && room.meta && room.meta.host === S.uid);
 const itemIds = game => Object.keys(game.items || {}).filter(k => game.items[k]).map(k => +k.slice(1));
+// 品物の種類と場所 [[種類, 列, 行], …](古いデータで spots がなければ決まった置き方)
+function spotsOf(game) {
+  if (!game.spots) return GR.ITEM_SPOTS;
+  return GR.ITEM_SPOTS.map((s, i) => {
+    const v = game.spots["i" + i];
+    if (!v) return s;
+    const [t, x, y] = v.split(",");
+    return [t, +x, +y];
+  });
+}
 
 const online = id => isCpu(id) || !!(room && room.players && room.players[id] && room.players[id].online !== false);
 
@@ -51,10 +63,11 @@ function makeRound(match, r, ids) {
   const players = {}, items = {};
   ids.forEach((id, i) => { players[id] = { name: match.names[id] || "?", i }; });
   (match.cpus || []).forEach((id, k) => { players[id] = { name: match.names[id] || "CPU", i: ids.length + k, cpu: true }; });
-  GR.ITEM_SPOTS.forEach((_, i) => { items["i" + i] = true; });
+  const spots = {};
+  GR.randomItemSpots().forEach((s, i) => { items["i" + i] = true; spots["i" + i] = s.join(","); });
   return {
     round: Date.now() + "-" + Math.floor(Math.random() * 1e6), no: r,
-    boss: match.order[r], players, items, t: GR.ROUND_SEC, phase: "prep", prep: GR.PREP_SEC,
+    boss: match.order[r], players, items, spots, t: GR.ROUND_SEC, phase: "prep", prep: GR.PREP_SEC,
   };
 }
 // 次に店長をやる人のラウンド番号(つながっている人だけ)。もうなければ null
@@ -84,9 +97,9 @@ function start(game, uid, code) {
   let n = 0; // 泥棒の色の番号
   const players = list.map(p => ({ id: p.id, name: p.name, cpu: p.cpu, i: p.id === game.boss ? 0 : n++ }));
   const G = GR.startOnline({
-    myId: uid, bossId: game.boss, players, itemIds: itemIds(game),
+    myId: uid, bossId: game.boss, players, spots: spotsOf(game), itemIds: itemIds(game),
     time: game.t ?? GR.ROUND_SEC, phase: game.phase === "prep" ? "prep" : "play",
-    hooks: { grab, caught, trap, buy, refund, used, ready, setTraps, banked },
+    hooks: { grab, caught, trap, buy, refund, used, ready, setTraps, banked, locker },
     label: room.match ? `ラウンド${(game.no || 0) + 1}/${room.match.order.length}` : "",
   });
   // トラップ(準備中の店長は、ここから自分で増やしたり減らしたりする)
@@ -151,6 +164,15 @@ function apply(game) {
     }
   }
   S.caughtSeen = new Set(Object.keys(caughtList));
+  for (const t of G.thieves) if (t.out) GR.releaseLocker(t);
+
+  // ロッカー(自分で開け閉めした直後は、自分の手元が正しいので上書きしない)
+  const lk = game.lockers || {};
+  for (const l of G.lockers) {
+    if (l.hold > 0) continue;
+    const d = lk[l.id] || {};
+    l.open = !!d.o; l.who = d.w || null;
+  }
   G.boss.caught = Object.values(caughtList).filter(v => v === true).length;
   G.catchesAll = Object.keys(caughtList).length;
   G.host = isHost();
@@ -250,6 +272,8 @@ async function caught(t, by) {
   try {
     await update(ref(db, gamePath() + "/caught"), { [t.id]: by === "police" ? "police" : true });
   } catch (e) { t.catching = false; return; }
+  const l = GR.lockerOf(t);
+  if (l) { GR.releaseLocker(t); update(ref(db, gamePath() + "/lockers/" + l.id), { o: 1, w: null }).catch(() => {}); }
   let taken = 0;
   if (!t.cpu) await addCoins(s, t.id, v => { taken = Math.floor(v / 2); return v - taken; }); // CPUはコインなし
   if (by !== "police") await addCoins(s, s.uid, v => v + taken + GR.BOSS_COIN_PER_CATCH);
@@ -260,6 +284,24 @@ async function addCoins(s, id, f) {
     const res = await runTransaction(ref(db, "rooms/gr-" + s.code + "/match/coins/" + id), v => f(v || 0));
     return !!res.committed;
   } catch (e) { return false; }
+}
+
+/* ロッカーを開けた・閉めた・入った・出た(e = 動かした人)
+   入るのは、先に入った人だけ(トランザクション)。入れなかったら、ゲームの中でも外に出す */
+async function locker(l, act, e) {
+  const p = gamePath() + "/lockers/" + l.id, G = GR.G;
+  try {
+    if (act === "open" || act === "close") await update(ref(db, p), { o: act === "open" ? 1 : 0 });
+    if (act === "exit") await update(ref(db, p), { w: null });
+    if (act === "enter") {
+      const busy = id => { const o = G.thieves.find(t => t.id === id); return !!(o && !o.out && o.in && o !== e); };
+      const res = await runTransaction(ref(db, p + "/w"), v => (v && v !== e.id && busy(v) ? undefined : e.id));
+      if (!res.committed && GR.G === G && l.who === e.id) {
+        l.who = null; e.x = l.fx + 0.5; e.y = l.fy + 0.5;
+        GR.popup(e, "先に入られた!");
+      }
+    }
+  } catch (err) { /* 通信が失敗したら、次に届いたデータで元にもどる */ }
 }
 
 /* 出口で点数にした → 持ち出した点数の半分がコインにもなる */
@@ -376,7 +418,8 @@ function endReason(game, G) {
   if (!on(game.boss)) return "bossLeft";
   const alive = Object.keys(game.players).filter(id => id !== game.boss && !caughtList[id] && on(id));
   if (!alive.length) return "allCaught";
-  const itemsLeft = itemIds(game).filter(i => GR.ITEM_SPOTS[i][0] !== "key");
+  const spots = spotsOf(game);
+  const itemsLeft = itemIds(game).filter(i => spots[i][0] !== "key");
   const carrying = alive.some(id => ((pos[id] && pos[id].c) || "").split(",").some(k => k && k !== "key"));
   if (!itemsLeft.length && !carrying) return "clear";
   return null;

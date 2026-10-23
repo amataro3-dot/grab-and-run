@@ -7,39 +7,47 @@
 /* ---------- マップ ----------
    # 壁   S 棚   C 調理台・机・カウンター   T テーブル
    H 隠れ場所(📦)   F 表の入り口   B 裏口   . 床
+   ロッカー(家具なので通れない): ^ v < > は扉のある向き(^ = 上に扉、v = 下に扉 …)
    上: 冷蔵室(左)と倉庫 / 中: 厨房(左)・事務所(右上)・金庫室(右下) / 下: 客席 → 表の入り口
-   棚・調理台・机・仕切りのまわりは、ぐるぐる回って逃げられる */
+   棚・調理台・ロッカー・仕切りのまわりは、ぐるぐる回って逃げられる */
 const MAP = [
   "########BB##########",
-  "#....#.............#",
+  "#...v#.......H....v#",
   "#.H..#..SSS...SSS..#",
   "#....#..SSS...SSS..#",
   "#.......SSS........#",
   "#....#.........H...#",
   "###.###..####.######",
-  "#.........#........#",
-  "#..H......#..CCCC..#",
-  "#..CCCCC.....CCCC..#",
+  "#>........#........#",
+  "#..H......#..^^^^..#",
+  "#..CCCCC.....vvvv..#",
   "#..CCCCC..#........#",
   "#.........#####.####",
-  "#.CC......#..H.....#",
+  "#.CC...H..#..H.....#",
   "#.CC......#........#",
   "####..#####.########",
-  "#..................#",
+  "#.................<#",
   "#.TT..##..TT..##.H.#",
   "#.TT..##..TT..##...#",
   "#......##.....##...#",
   "#..H...##..TT......#",
   "#......##..TT..TT..#",
-  "#..TT..........TT..#",
+  "#..TT........H.TT..#",
   "#..TT....H.........#",
   "#.....CCCCCC.......#",
-  "#..................#",
+  "#>.................#",
   "#########FF#########",
 ];
 const MW = MAP[0].length, MH = MAP.length;
-const SOLID = "#SCT";      // 通れないマス
+const LOCKER_DIRS = { "^": [0, -1], "v": [0, 1], "<": [-1, 0], ">": [1, 0] }; // 扉の向き
+const SOLID = "#SCT^v<>";  // 通れないマス
 const BLOCK_SIGHT = "#S";  // 向こうが見えないマス
+// ロッカーの一覧。id は L0, L1 …(上の行から順番)。fx, fy = 扉の前のマス(ここに立つと開け閉めできる)
+const LOCKERS = [];
+for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+  const d = LOCKER_DIRS[MAP[y][x]];
+  if (d) LOCKERS.push({ id: "L" + LOCKERS.length, x, y, dx: d[0], dy: d[1], fx: x + d[0], fy: y + d[1] });
+}
 
 /* ---------- 品物(点数・重さ) ---------- */
 const ITEMS = {
@@ -52,7 +60,7 @@ const ITEMS = {
   cheese: { name: "チーズ",     emoji: "🧀", pts: 20,  w: 1 },
   bread:  { name: "パン",       emoji: "🍞", pts: 10,  w: 1 },
 };
-// [種類, 列, 行]
+// 置く品物 [種類, 列, 行]。場所は毎ラウンド randomItemSpots で決めなおす(ここの列・行はテスト用の決まった置き方)
 const ITEM_SPOTS = [
   ["safe", 17, 13], ["cash", 12, 13], ["key", 3, 3],
   ["meat", 2, 7], ["meat", 9, 12], ["cheese", 8, 7],
@@ -77,9 +85,12 @@ const BOSS_CHASE = 4.4;       // CPU店長が追いかける速さ
 const BOSS_CHASE_SEC = 4;     // CPU店長が追いかけ続けられる時間
 const BOSS_REST_SEC = 3;      // 追いかけたあと休む時間
 const BOSS_HUMAN = 4.8;       // 自分が店長のときの速さ
+const BOSS_CHECK_RATE = 0.3;  // CPU店長が見回りのとき、近くのロッカーを調べに行く割合
+const BOSS_CHECK_NEAR = 3;    // CPU店長が泥棒を見失った場所から、このマス以内のロッカーを調べる
 const BOSS_SIGHT = 5;         // 店長の見える範囲
 const THIEF_SIGHT = 4.5;      // 泥棒の見える範囲
 const CPU_FLEE_DIST = 6;      // CPU泥棒が店長から逃げ始める距離
+const CPU_LOCKER_STEP = 0.2;  // CPU泥棒がロッカーを開ける・入る・閉めるの間の時間
 const CATCH_DIST = 0.6;       // これより近づいたら捕まる
 const GRAB_SEC = 0.8;         // 盗むのにかかる長押しの時間
 const GRAB_RANGE = 0.9;       // 盗める距離
@@ -167,12 +178,39 @@ const POLICE_SPAWN = [{ x: 9.5, y: 24.5 }, { x: 10.5, y: 24.5 }, { x: 8.5, y: 1.
 const POLICE_FLOORS = FLOORS.filter(([x, y]) =>
   [...DOORS.front, ...DOORS.back].some(d => Math.hypot(x + 0.5 - d.x, y + 0.5 - d.y) < POLICE_AREA));
 
+/* 品物の場所を毎ラウンドランダムに決める(種類と数は ITEM_SPOTS と同じ)
+   - 金庫は金庫室の中だけ
+   - 出入口から ITEM_DOOR_DIST マス以内には置かない
+   - 品物どうしはくっつけない(まわり8マスに別の品物がない)
+   - ロッカーの扉の前のマスには置かない */
+const ITEM_DOOR_DIST = 3;
+const isVault = (x, y) => y >= 12 && y <= 13 && x >= 11;
+const isLockerFront = (x, y) => LOCKERS.some(l => l.fx === x && l.fy === y);
+const ITEM_FLOORS = FLOORS.filter(([x, y]) => !isLockerFront(x, y) &&
+  [...DOORS.front, ...DOORS.back].every(d => Math.hypot(x + 0.5 - d.x, y + 0.5 - d.y) > ITEM_DOOR_DIST));
+function randomItemSpots() {
+  if (window.__fixedItems) return ITEM_SPOTS.map(s => [...s]); // テストでは決まった置き方
+  for (let tries = 0; tries < 50; tries++) {
+    const out = [];
+    const free = (x, y) => out.every(([, ox, oy]) => Math.max(Math.abs(ox - x), Math.abs(oy - y)) >= 2);
+    for (const [type] of ITEM_SPOTS) {
+      const cand = ITEM_FLOORS.filter(([x, y]) => (type !== "safe" || isVault(x, y)) && free(x, y));
+      if (!cand.length) break;
+      const [x, y] = cand[Math.floor(Math.random() * cand.length)];
+      out.push([type, x, y]);
+    }
+    if (out.length === ITEM_SPOTS.length) return out;
+  }
+  return ITEM_SPOTS.map(s => [...s]); // うまく置けなかったとき(まず起きない)
+}
+const makeItems = spots => spots.map(([type, x, y], i) => ({ id: i, type, x: x + 0.5, y: y + 0.5, claim: null }));
+
 /* ---------- ゲームの状態 ---------- */
 let G = null;
 
 function makeThief(i, name, cpu, spawn) {
   return {
-    i, name, cpu, x: spawn.x, y: spawn.y, face: 1,
+    id: "t" + i, i, name, cpu, x: spawn.x, y: spawn.y, face: 1,
     carry: [], bank: 0, hidden: false, out: false, grab: null, in: true,
     ai: { mode: "think", path: [], repath: 0, wait: rand(0.3, 2), greed: rand(3, 6), hideT: 0, target: null },
   };
@@ -198,7 +236,7 @@ for (const [id, d] of [["pcMinus", -1], ["pcPlus", 1]]) $(id).addEventListener("
 renderPracticeCount();
 
 function newGame(role) {
-  const items = ITEM_SPOTS.map(([type, x, y], i) => ({ id: i, type, x: x + 0.5, y: y + 0.5, claim: null }));
+  const items = makeItems(randomItemSpots());
   // 泥棒: 自分 + CPUの仲間(人数−2人)。店長: CPUの泥棒(人数−1人)
   const thieves = role === "thief"
     ? [makeThief(0, "あなた", false, DOORS.front[0]),
@@ -207,8 +245,8 @@ function newGame(role) {
   if (role === "thief") thieves[0].ai.wait = 0;
   G = {
     phase: "play", role, time: ROUND_SEC, items, thieves,
-    boss: { x: 8.5, y: 10.5, face: 1, cpu: role !== "boss", path: [], mode: "patrol", lastSeen: null, repath: 0, caught: 0 },
-    popups: [], police: [], ...emptyMarks(), coins: START_COINS, hooks: practiceHooks,
+    boss: { id: "boss", x: 8.5, y: 10.5, face: 1, cpu: role !== "boss", path: [], mode: "patrol", lastSeen: null, repath: 0, caught: 0, in: true },
+    popups: [], police: [], ...emptyMarks(), coins: START_COINS, hooks: practiceHooks, lockers: makeLockers(),
   };
   $("start").classList.add("hidden"); $("result").classList.add("hidden");
   if (role === "thief") {
@@ -376,7 +414,7 @@ function inputDir() {
 const me = () => !G || G.role !== "thief" ? null : G.online ? G.me : G.thieves[0];
 function startGrab() {
   const t = me();
-  if (!t || t.out || !t.in || t.grab || G.phase !== "play") return;
+  if (!t || t.out || !t.in || t.grab || G.phase !== "play" || lockerOf(t)) return;
   const it = nearestItem(t);
   if (it) t.grab = { id: it.id, t: 0, dur: grabTime(t, it) };
 }
@@ -387,6 +425,27 @@ grabBtn.addEventListener("pointerdown", e => { e.preventDefault(); startGrab(); 
 for (const ev of ["pointerup", "pointercancel", "pointerleave"]) grabBtn.addEventListener(ev, stopGrab);
 addEventListener("keydown", e => { if (e.key === " " && me() && !me().grab) startGrab(); });
 addEventListener("keyup", e => { if (e.key === " ") stopGrab(); });
+
+// ロッカーのボタン(扉の前か中にいるときだけ出る)。キーボードは E が1つ目、Q が2つ目
+const actor = () => !G ? null : G.role === "boss" ? (G.boss.cpu ? null : G.boss) : me();
+function renderAct() {
+  const box = $("act"), e = actor(), acts = e ? lockerActions(e) : [];
+  box.classList.toggle("hidden", !acts.length);
+  box.classList.toggle("boss", !!(G && G.role === "boss"));
+  const key = acts.join(",");
+  if (box.dataset.key === key) return;
+  box.dataset.key = key; box.textContent = "";
+  for (const a of acts) {
+    const b = document.createElement("button");
+    b.className = "act-btn"; b.dataset.act = a; b.innerHTML = `🗄️<br>${LOCKER_LABEL[a]}`;
+    b.addEventListener("pointerdown", ev => { ev.preventDefault(); const who = actor(); if (who) doLocker(who, a); });
+    box.append(b);
+  }
+}
+addEventListener("keydown", e => {
+  const k = e.key.toLowerCase(), who = actor();
+  if ((k === "e" || k === "q") && who && !e.repeat) { const a = lockerActions(who)[k === "e" ? 0 : 1]; if (a) doLocker(who, a); }
+});
 
 /* ---------- CPUの泥棒 ---------- */
 function bestDoorPath(t) {
@@ -417,6 +476,8 @@ function fleePath(t, b) {
     const c = { x: x + 0.5, y: y + 0.5 };
     let score = dist(c, b) - dp * 0.25;
     if (tileAt(x, y) === "H" && dist(c, b) > 1.5 && !canSee(b, c) && !others.some(o => tileOf(o)[0] === x && tileOf(o)[1] === y)) score += 6;
+    const lk = lockerAt(x, y); // 空いているロッカーの前も隠れ場所の候補
+    if (lk && !occupant(lk) && dist(c, b) > 2 && !canSee(b, c)) score += 6;
     if (isDoor(x, y) && loot(t).length) score += 4;
     if (score > bestScore && dp > 0) { bestScore = score; best = key(x, y); }
     if (dp >= 7) continue;
@@ -444,6 +505,23 @@ function cpuThief(t, dt) {
   ai.alarm = Math.max(0, (ai.alarm || 0) - dt);
   const danger = canSee(t, b) && (bd < 1.8 || (bd < CPU_FLEE_DIST && ai.alarm > 0));
   ai.repath -= dt;
+
+  // ロッカーの開け閉め(少しずつ順番に: 開ける → 入る → 閉める など)
+  if (ai.seq && ai.seq.length) {
+    if ((ai.seqT -= dt) > 0) return;
+    ai.seqT = CPU_LOCKER_STEP;
+    if (!doLocker(t, ai.seq.shift())) ai.seq = [];
+    if (!ai.seq.length) { ai.mode = lockerOf(t) ? "hide" : "think"; ai.hideT = 0; ai.path = []; }
+    return;
+  }
+  // ロッカーの中: 閉まっていれば店長がいなくなるまでじっとして、それから出る
+  const inL = lockerOf(t);
+  if (inL) {
+    if (inL.open) { ai.seq = danger ? ["close"] : ["exit"]; ai.seqT = CPU_LOCKER_STEP; return; }
+    if (danger) { ai.hideT = 0; return; }
+    if ((ai.hideT += dt) >= 1.5) { ai.seq = ["open", "exit"]; ai.seqT = CPU_LOCKER_STEP; }
+    return;
+  }
 
   // 隠れている間は、店長がいなくなるまでじっとする
   if (t.hidden && ai.mode === "hide") {
@@ -496,7 +574,9 @@ function cpuThief(t, dt) {
   }
   if (ai.mode === "exit" && !ai.path.length) ai.mode = "think";
   if (ai.mode === "flee" && !ai.path.length) {
+    const lk = lockerAt(...tileOf(t));
     if (tileAt(...tileOf(t)) === "H") { ai.mode = "hide"; ai.hideT = 0; }
+    else if (lk && !occupant(lk)) { ai.mode = "locker"; ai.seq = lk.open ? ["enter", "close"] : ["open", "enter", "close"]; ai.seqT = CPU_LOCKER_STEP; return; }
     else if (!danger) ai.mode = "think";
   }
 
@@ -521,7 +601,13 @@ function cpuBoss(dt) {
     b.chaseT = (b.chaseT || 0) + dt;
     if (b.chaseT > BOSS_CHASE_SEC) { b.tired = BOSS_REST_SEC; b.chaseT = 0; b.mode = "patrol"; b.lastSeen = null; b.path = []; target = null; }
   } else b.chaseT = 0;
-  if (target) { b.mode = "chase"; b.lastSeen = { x: target.x, y: target.y }; }
+  if (target) { const [sx, sy] = standTile(target); b.mode = "chase"; b.lastSeen = { x: sx + 0.5, y: sy + 0.5 }; b.check = null; }
+  // 調べに来たロッカーの前に着いたら開ける(中に泥棒がいたら捕まえる)
+  const [bx0, by0] = tileOf(b);
+  if (b.check && !target && b.check.fx === bx0 && b.check.fy === by0) {
+    if (!b.check.open) doLocker(b, "open");
+    b.check = null; b.path = [];
+  }
   b.repath -= dt;
   if (b.repath <= 0 || !b.path.length) {
     b.repath = 0.3;
@@ -529,13 +615,29 @@ function cpuBoss(dt) {
     let goal = null;
     if (b.mode === "chase" && b.lastSeen) {
       goal = [Math.floor(b.lastSeen.x), Math.floor(b.lastSeen.y)];
-      if (bx === goal[0] && by === goal[1] && !target) { b.mode = "patrol"; b.lastSeen = null; goal = null; }
+      if (bx === goal[0] && by === goal[1] && !target) {
+        // 見失った。近くに閉まったロッカーがあれば調べに行く
+        b.check = nearLockers(b.lastSeen, BOSS_CHECK_NEAR)[0] || null;
+        b.mode = "patrol"; b.lastSeen = null; goal = null;
+      }
     }
-    if (!goal && !b.path.length) goal = FLOORS[Math.floor(Math.random() * FLOORS.length)];
+    if (!goal && b.check) goal = [b.check.fx, b.check.fy];
+    if (!goal && !b.path.length) {
+      // 見回り。ときどき近くの閉まったロッカーを調べに行く
+      const near = Math.random() < BOSS_CHECK_RATE && nearLockers(b, 8);
+      if (near && near.length) { b.check = near[Math.floor(Math.random() * Math.min(3, near.length))]; goal = [b.check.fx, b.check.fy]; }
+      else goal = FLOORS[Math.floor(Math.random() * FLOORS.length)];
+    }
     if (goal) b.path = findPath(bx, by, goal[0], goal[1], false) || [];
     if (!b.path.length && b.mode === "chase" && !target) { b.mode = "patrol"; b.lastSeen = null; }
+    if (!b.path.length && b.check && !(b.check.fx === bx && b.check.fy === by)) b.check = null; // 行けないロッカーはあきらめる
   }
   followPath(b, b.path, b.mode === "chase" ? BOSS_CHASE : BOSS_PATROL, dt);
+}
+// 近くの閉まったロッカー(近い順)
+function nearLockers(at, maxDist) {
+  return G.lockers.filter(l => !l.open && Math.hypot(l.fx + 0.5 - at.x, l.fy + 0.5 - at.y) <= maxDist)
+    .sort((a, c) => Math.hypot(a.fx + 0.5 - at.x, a.fy + 0.5 - at.y) - Math.hypot(c.fx + 0.5 - at.x, c.fy + 0.5 - at.y));
 }
 
 /* ---------- 警察(CPU) ----------
@@ -566,7 +668,7 @@ function policeStep(p, dt, catchDist, onCatch) {
     const d = dist(p, t);
     if (d < POLICE_SIGHT && d < td && canSee(p, t)) { target = t; td = d; }
   }
-  if (target) { p.mode = "chase"; p.lastSeen = { x: target.x, y: target.y }; }
+  if (target) { const [sx, sy] = standTile(target); p.mode = "chase"; p.lastSeen = { x: sx + 0.5, y: sy + 0.5 }; }
   p.repath -= dt;
   if (p.repath <= 0 || !p.path.length) {
     p.repath = 0.4;
@@ -581,11 +683,10 @@ function policeStep(p, dt, catchDist, onCatch) {
     if (!p.path.length && p.mode === "chase" && !target) { p.mode = "patrol"; p.lastSeen = null; }
   }
   followPath(p, p.path, p.mode === "chase" ? POLICE_CHASE : POLICE_PATROL, dt);
-  const [px, py] = tileOf(p);
   for (const t of alive()) {
     const [tx, ty] = tileOf(t);
     if (t.catching || isDoor(tx, ty)) continue;
-    if ((!t.hidden && dist(p, t) < catchDist) || (t.hidden && px === tx && py === ty)) {
+    if (canCatch(p, t, catchDist)) {
       onCatch(t);
       p.mode = "patrol"; p.lastSeen = null; p.path = [];
     }
@@ -630,13 +731,12 @@ function update(dt) {
   if (b.cpu) cpuBoss(dt);
   else { const [dx, dy] = inputDir(); moveBy(b, dx * BOSS_HUMAN * dt, dy * BOSS_HUMAN * dt); }
 
-  // 捕まった？(隠れていても、同じマスに来られたらアウト)
-  const [bx, by] = tileOf(b);
+  // 捕まった？(隠れていても、同じマスに来られたらアウト。開いたロッカーの中は扉の前でアウト)
   for (const t of alive()) {
     const [tx, ty] = tileOf(t);
     if (isDoor(tx, ty)) continue;
-    if ((!t.hidden && dist(b, t) < CATCH_DIST) || (t.hidden && bx === tx && by === ty)) {
-      t.out = true; b.caught++;
+    if (canCatch(b, t, CATCH_DIST)) {
+      t.out = true; b.caught++; releaseLocker(t);
       if (t.ai.target) t.ai.target.claim = null;
       popup(t, "捕まった!"); announceCaught(t, false);
       if (!t.cpu || G.role === "boss") vibrate(200);
@@ -648,7 +748,7 @@ function update(dt) {
 
   // 警察(上限は 人数−2)
   runPolice(dt, G.thieves.length + 1, G.thieves.filter(t => t.out).length, CATCH_DIST, t => {
-    t.out = true; t.byPolice = true;
+    t.out = true; t.byPolice = true; releaseLocker(t);
     if (t.ai.target) t.ai.target.claim = null;
     popup(t, "警察に捕まった!"); announceCaught(t, true);
     if (!t.cpu) vibrate(200);
@@ -678,6 +778,7 @@ function takeItem(t, it) {
 }
 // スティックで自分の泥棒を動かす
 function moveMe(t, dt) {
+  if (lockerOf(t)) return; // ロッカーの中では動けない(「出る」で出る)
   const [dx, dy] = inputDir(), sp = THIEF_SPEED * speedRate(t) * boostRate(t) * dt;
   moveBy(t, dx * sp, dy * sp);
 }
@@ -692,13 +793,70 @@ function stepThief(t, dt, normalMove) {
 }
 // 隠れ場所にいるか・出口に着いたか。出口で点数にしたら、その点数を返す
 function checkSpot(t) {
-  const [tx, ty] = tileOf(t);
-  t.hidden = tileAt(tx, ty) === "H" && !t.grab && !lockedHide(tx, ty);
-  if (!(isDoor(tx, ty) && loot(t).length)) return 0;
+  const [tx, ty] = tileOf(t), l = lockerOf(t);
+  t.hidden = l ? !l.open : tileAt(tx, ty) === "H" && !t.grab; // ロッカーは閉めているときだけ見えない
+  if (l || !(isDoor(tx, ty) && loot(t).length)) return 0;
   const p = carryP(t);
   t.bank += p; t.carry = hasKey(t) ? ["key"] : [];
   popup(t, "+" + p + "点!");
   return p;
+}
+
+/* ---------- ロッカー ----------
+   G.lockers: [{ id, x, y, fx, fy(扉の前のマス), open: 開いているか, who: 中にいる泥棒のID, anim: 扉の開き具合 0〜1 }]
+   泥棒: 扉の前で「開ける」→「入る」→「閉める」で隠れる。中から「開ける」→「出る」(出たあと扉は開いたまま)
+   店長: 扉の前で「開ける」→ 中に泥棒がいたら捕まえる。開いたロッカーの中の泥棒は、扉の前に立つだけで捕まえる
+   警察は開けない。1つのロッカーに入れるのは1人 */
+const LOCKER_HOLD = 0.8; // 自分で開け閉めしたあと、この秒数はネットの古い情報で上書きしない
+const LOCKER_LABEL = { open: "開ける", close: "閉める", enter: "入る", exit: "出る" };
+function makeLockers() { return LOCKERS.map(l => ({ ...l, open: false, who: null, anim: 0, hold: 0 })); }
+const lockerAt = (tx, ty) => G.lockers.find(l => l.fx === tx && l.fy === ty); // その場所が扉の前のロッカー
+const lockerOf = t => !!(G && G.lockers && t) && G.lockers.find(l => l.who === t.id) || null; // t が入っているロッカー
+// 中にいる泥棒(捕まった人・いなくなった人は数えない)
+function occupant(l) {
+  const t = l.who && G.thieves.find(o => o.id === l.who);
+  return t && !t.out && t.in ? t : null;
+}
+// 店長・警察・CPUが向かう場所(ロッカーの中の泥棒なら扉の前)
+function standTile(t) { const l = lockerOf(t); return l ? [l.fx, l.fy] : tileOf(t); }
+// 捕まえられるか(c = 店長か警察)。隠れていても同じマスならアウト。開いたロッカーの中なら扉の前でアウト
+function canCatch(c, t, d) {
+  const [cx, cy] = tileOf(c), l = lockerOf(t);
+  if (l) return l.open && cx === l.fx && cy === l.fy;
+  const [tx, ty] = tileOf(t);
+  return t.hidden ? cx === tx && cy === ty : dist(c, t) < d;
+}
+// 今できること(ボタンに出す)。e = 泥棒か店長
+function lockerActions(e) {
+  if (!G || !G.lockers || G.phase !== "play" || !e || e.out || !e.in) return [];
+  const isBoss = e === G.boss, inside = !isBoss && lockerOf(e);
+  if (inside) return inside.open ? ["close", "exit"] : ["open"];
+  if (e.stun > 0 || e.slip || e.grab) return [];
+  const l = lockerAt(...tileOf(e));
+  if (!l) return [];
+  if (!l.open) return ["open"];
+  if (isBoss || occupant(l)) return ["close"];
+  return ["enter", "close"];
+}
+// 開ける・閉める・入る・出る。できたら true
+function doLocker(e, act) {
+  if (!lockerActions(e).includes(act)) return false;
+  const l = (e !== G.boss && lockerOf(e)) || lockerAt(...tileOf(e));
+  if (act === "open") l.open = true;
+  if (act === "close") l.open = false;
+  if (act === "enter") { l.who = e.id; e.x = l.x + 0.5; e.y = l.y + 0.5; e.grab = null; }
+  if (act === "exit") { l.who = null; e.x = l.fx + 0.5; e.y = l.fy + 0.5; }
+  l.hold = LOCKER_HOLD;
+  if (G.online) G.hooks.locker(l, act, e);
+  return true;
+}
+// 捕まった泥棒はロッカーから出す(扉は開いたまま)
+function releaseLocker(t) { const l = lockerOf(t); if (l) { l.who = null; l.open = true; } }
+function updateLockers(dt) {
+  for (const l of G.lockers) {
+    l.hold = Math.max(0, l.hold - dt);
+    l.anim = Math.max(0, Math.min(1, l.anim + (l.open ? dt : -dt) * 8)); // パタンとすぐ開く・閉まる
+  }
 }
 
 /* ---------- オンライン対戦の毎フレームの処理 ----------
@@ -728,12 +886,11 @@ function updateOnline(dt) {
   if (m === b) {
     const [dx, dy] = inputDir();
     moveBy(b, dx * BOSS_HUMAN * dt, dy * BOSS_HUMAN * dt);
-    // 捕まえた判定は店長の画面で決める(隠れていても、同じマスに来られたらアウト)
-    const [bx, by] = tileOf(b);
+    // 捕まえた判定は店長の画面で決める(隠れていても、同じマスに来られたらアウト。開いたロッカーの中は扉の前でアウト)
     for (const t of alive()) {
       const [tx, ty] = tileOf(t);
       if (t.catching || isDoor(tx, ty)) continue;
-      if ((!t.hidden && dist(b, t) < ONLINE_CATCH_DIST) || (t.hidden && bx === tx && by === ty)) {
+      if (canCatch(b, t, ONLINE_CATCH_DIST)) {
         t.catching = true;
         popup(t, "捕まえた!"); vibrate(200);
         G.hooks.caught(t);
@@ -808,7 +965,7 @@ function runOnlineCpus(dt) {
 }
 
 /* オンライン対戦を始める(online.js から呼ぶ)
-   opts: { myId, bossId, players: [{ id, name, i }], itemIds: 残っている品物の番号, time, hooks } */
+   opts: { myId, bossId, players: [{ id, name, i }], spots: 品物の場所, itemIds: 残っている品物の番号, time, hooks } */
 function startOnline(opts) {
   const thieves = opts.players.filter(p => p.id !== opts.bossId).map(p => {
     const t = makeThief(p.i, p.name, !!p.cpu, DOORS.front[0]);
@@ -817,13 +974,12 @@ function startOnline(opts) {
   });
   const bp = opts.players.find(p => p.id === opts.bossId);
   const boss = { id: opts.bossId, name: bp ? bp.name : "店長", x: 8.5, y: 10.5, face: 1, cpu: false, path: [], mode: "patrol", caught: 0, in: true };
-  const items = ITEM_SPOTS.map(([type, x, y], i) => ({ id: i, type, x: x + 0.5, y: y + 0.5, claim: null }))
-    .filter(it => opts.itemIds.includes(it.id));
+  const items = makeItems(opts.spots || ITEM_SPOTS).filter(it => opts.itemIds.includes(it.id));
   const role = opts.myId === opts.bossId ? "boss" : "thief";
   G = {
     phase: "play", online: true, role, time: opts.time, items, thieves, boss, popups: [], hooks: opts.hooks,
     me: role === "boss" ? boss : thieves.find(t => t.id === opts.myId),
-    police: [], nPlayers: opts.players.length, catchesAll: 0, host: false, ...emptyMarks(),
+    police: [], nPlayers: opts.players.length, catchesAll: 0, host: false, ...emptyMarks(), lockers: makeLockers(),
   };
   G.phase = opts.phase || "play";
   lastHud = ""; joy = null;
@@ -862,14 +1018,14 @@ document.querySelectorAll("[data-enter]").forEach(btn => btn.addEventListener("p
 function stopOnline() {
   if (!G || !G.online) return;
   G = null; joy = null;
-  for (const id of ["hud", "grab", "result", "door", "prep", "itemBar", "banner", "watch"]) $(id).classList.add("hidden");
+  for (const id of ["hud", "grab", "result", "door", "prep", "itemBar", "banner", "watch", "act"]) $(id).classList.add("hidden");
 }
 
 // 結果画面を出す(html は名前などを入れる前に escapeHtml しておく)
 const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 function showResult(title, score, noteHtml, online) {
   G.phase = "end"; joy = null;
-  for (const id of ["hud", "grab", "door", "prep", "itemBar", "watch"]) $(id).classList.add("hidden");
+  for (const id of ["hud", "grab", "door", "prep", "itemBar", "watch", "act"]) $(id).classList.add("hidden");
   $("result").classList.remove("hidden");
   $("resTitle").textContent = title;
   $("resScore").textContent = score;
@@ -881,7 +1037,7 @@ function showResult(title, score, noteHtml, online) {
 window.GR = {
   makePolice, startOnline, beginPlay, announceCaught, sirenOn, renderShop, renderPrep, closeDoor, addAlert,
   TRAPS, GEAR, START_COINS, BOSS_COIN_PER_CATCH, PREP_SEC, DOOR_SEC, SMOKE_SEC, stopOnline, showResult, escapeHtml, popup, vibrate,
-  ITEMS, ITEM_SPOTS, TOTAL_PTS, ROUND_SEC, BOSS_PER_CATCH, BOSS_KEEP_RATE, get G() { return G; } };
+  ITEMS, ITEM_SPOTS, randomItemSpots, lockerOf, releaseLocker, TOTAL_PTS, ROUND_SEC, BOSS_PER_CATCH, BOSS_KEEP_RATE, get G() { return G; } };
 
 function finish(why) {
   const stolen = G.thieves.reduce((s, t) => s + t.bank, 0);
@@ -959,6 +1115,7 @@ function draw() {
     else if (c === "H") { ctx.fillStyle = "#c8a165"; ctx.fillRect(px + T * 0.1, py + T * 0.15, T * 0.8, T * 0.7); ctx.strokeStyle = "#8a6a3a"; ctx.lineWidth = 2; ctx.strokeRect(px + T * 0.1, py + T * 0.15, T * 0.8, T * 0.7); ctx.beginPath(); ctx.moveTo(px + T * 0.5, py + T * 0.15); ctx.lineTo(px + T * 0.5, py + T * 0.85); ctx.stroke(); }
     else if (c === "F" || c === "B") { ctx.fillStyle = "#2f8f55"; ctx.fillRect(px, py, T + 1, T + 1); }
   }
+  drawLockers(x0, x1, y0, y1);
   // 出口の文字
   ctx.fillStyle = "#fff"; ctx.font = `700 ${T * 0.36}px sans-serif`;
   ctx.fillText("表の入り口", 10 * T, (MH - 0.5) * T);
@@ -1041,6 +1198,49 @@ function draw() {
   }
 }
 
+/* ---------- ロッカーの絵 ----------
+   上から見た金属のロッカー。扉は表(扉のある向き)の辺についていて、開くと外側へパタンと回る */
+function drawLockers(x0, x1, y0, y1) {
+  const act = actor(), mine = act && (lockerOf(act) || (lockerActions(act).length && lockerAt(...tileOf(act))));
+  for (const l of G.lockers) {
+    if (l.x < x0 - 1 || l.x > x1 + 1 || l.y < y0 - 1 || l.y > y1 + 1) continue;
+    const px = l.x * T, py = l.y * T, cx = px + T / 2, cy = py + T / 2, m = T * 0.06;
+    // 本体
+    ctx.fillStyle = "#3d5368"; ctx.fillRect(px + m, py + m, T - m * 2, T - m * 2);
+    ctx.strokeStyle = "#22313f"; ctx.lineWidth = 2; ctx.strokeRect(px + m, py + m, T - m * 2, T - m * 2);
+    // 中(開くと暗い中が見える)
+    if (l.anim > 0.02) {
+      ctx.globalAlpha = l.anim;
+      ctx.fillStyle = "#14181e"; ctx.fillRect(px + m * 2.5, py + m * 2.5, T - m * 5, T - m * 5);
+      ctx.globalAlpha = 1;
+    } else {
+      // 閉まっているときは、空気穴のすき間
+      ctx.strokeStyle = "#2a3a4a"; ctx.lineWidth = 2;
+      const ux = -l.dy, uy = l.dx; // 扉の辺にそった向き
+      for (const k of [-0.15, 0, 0.15]) {
+        const ax = cx - l.dx * T * 0.12 + l.dx * k * T * 0.9, ay = cy - l.dy * T * 0.12 + l.dy * k * T * 0.9;
+        ctx.beginPath(); ctx.moveTo(ax - ux * T * 0.22, ay - uy * T * 0.22); ctx.lineTo(ax + ux * T * 0.22, ay + uy * T * 0.22); ctx.stroke();
+      }
+    }
+    // 扉: 表の辺の片はしがちょうつがい。開くほど外へ回る
+    const h = T / 2 - m, ux = -l.dy, uy = l.dx;
+    const hx = cx + l.dx * h - ux * h, hy = cy + l.dy * h - uy * h; // ちょうつがい
+    const a = l.anim * 1.75, len = T - m * 2;
+    const ex = hx + (ux * Math.cos(a) + l.dx * Math.sin(a)) * len, ey = hy + (uy * Math.cos(a) + l.dy * Math.sin(a)) * len;
+    ctx.strokeStyle = "#8fb0cc"; ctx.lineWidth = Math.max(3, T * 0.1); ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.lineCap = "butt";
+    // 取っ手
+    const kx = hx + (ex - hx) * 0.8, ky = hy + (ey - hy) * 0.8;
+    ctx.fillStyle = "#ffcc33"; ctx.beginPath(); ctx.arc(kx, ky, T * 0.05, 0, 7); ctx.fill();
+    // 自分が今さわれるロッカーは光らせる
+    if (l === mine) {
+      ctx.strokeStyle = "rgba(255, 204, 51, 0.8)"; ctx.lineWidth = 2;
+      ctx.strokeRect(px + 1, py + 1, T - 2, T - 2);
+    }
+  }
+}
+
 /* ---------- 警察の光 ---------- */
 // 警察: 体のまわりが赤く光り、頭の上の赤いランプがくるくるまわる
 function drawPoliceLight(p) {
@@ -1099,7 +1299,8 @@ function updateHud() {
     else if (!m.in) { c = "入り口を選んでね"; d = ""; }
     else {
       c = "手持ち " + (m.carry.length ? m.carry.map(k => ITEMS[k].emoji).join("") + `(${carryP(m)}点)` : "なし");
-      d = `足の速さ ${Math.round(speedRate(m) * 100)}%`;
+      const lk = lockerOf(m);
+      d = lk ? (lk.open ? "扉が開いてる！閉めないと丸見え" : "🗄️ ロッカーに隠れている") : `足の速さ ${Math.round(speedRate(m) * 100)}%`;
       const it = nearestItem(m);
       canGrab = !!it || !!m.grab;
       const opening = it && it.type === "safe" && hasKey(m);
@@ -1128,7 +1329,8 @@ function loop(now) {
   if (G && G.online) { if (G.phase !== "end") updateOnline(dt); }
   else update(dt);
   if (G && G.siren > 0) G.siren -= dt;
-  renderItemBar(); renderWatch();
+  if (G && G.lockers) updateLockers(dt);
+  renderItemBar(); renderWatch(); renderAct();
   draw();
   updateHud();
   const m = me();

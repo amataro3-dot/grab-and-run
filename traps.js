@@ -12,11 +12,10 @@ const TRAPS = {
   rat:    { name: "ネズミ捕り",   emoji: "🪤", price: 0,  info: "2秒動けない" },
   buzzer: { name: "防犯ブザー",   emoji: "🚨", price: 30, info: "店長の画面に場所が出る" },
   flour:  { name: "小麦粉の袋",   emoji: "🌾", price: 30, info: "数秒、足跡が残る" },
-  lock:   { name: "ロッカーの鍵", emoji: "🔒", price: 40, info: "📦の上に置く。そこに隠れられなくなる" },
   camera: { name: "監視カメラ",   emoji: "📹", price: 60, info: "まわりがずっと店長から見える" },
   door:   { name: "自動ロック扉", emoji: "🚪", price: 50, info: "通ったあと10秒ふさぐ" },
 };
-const PASSIVE_TRAPS = ["lock", "camera"]; // 踏んでも発動しない(置いてあるだけで効く)
+const PASSIVE_TRAPS = ["camera"]; // 踏んでも発動しない(置いてあるだけで効く)
 const GEAR = {
   sneakers: { name: "スニーカー",   emoji: "👟", price: 40, use: true, info: "10秒だけ足が速くなる" },
   bag:      { name: "大きいカバン", emoji: "🎒", price: 50, info: "たくさん持っても遅くなりにくい" },
@@ -51,7 +50,7 @@ const trapOn = (tx, ty) => G.traps.find(k => k.x === tx && k.y === ty);
 const placedCount = type => G.traps.filter(k => k.type === type).length;
 function trapProblem(type, tx, ty) {
   const c = tileAt(tx, ty);
-  if (type === "lock" ? c !== "H" : c !== ".") return type === "lock" ? "📦の上に置いてね" : "そこには置けない";
+  if (c !== ".") return "そこには置けない";
   if (trapOn(tx, ty)) return "もう置いてある";
   if (G.items.some(it => Math.floor(it.x) === tx && Math.floor(it.y) === ty)) return "品物の上には置けない";
   if (G.traps.length >= TRAP_MAX) return `トラップは${TRAP_MAX}個まで`;
@@ -144,8 +143,6 @@ function updateMarks(dt) {
 }
 // 監視カメラに映っているか
 const onCamera = e => G.traps.some(k => k.type === "camera" && Math.hypot(k.x + 0.5 - e.x, k.y + 0.5 - e.y) <= CAMERA_R);
-// 📦に隠れられるか(ロッカーの鍵があるとダメ)
-const lockedHide = (tx, ty) => G.traps.some(k => k.type === "lock" && k.x === tx && k.y === ty);
 
 /* ---------- 描画(main.js の draw から呼ぶ。カメラの位置にそろえた状態で) ---------- */
 function drawTraps(isBoss, v) {
@@ -215,7 +212,7 @@ function renderPrep() {
   $("prepPick").classList.toggle("hidden", !armed);
   if (armed) {
     $("prepPickName").textContent = `${armed.emoji} ${armed.name}`;
-    $("prepPickHow").textContent = G.armed === "lock" ? "📦をタップして置く" : "置く場所をタップ";
+    $("prepPickHow").textContent = "置く場所をタップ";
   }
   const box = $("prepTraps");
   box.textContent = "";

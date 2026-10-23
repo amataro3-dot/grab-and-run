@@ -106,8 +106,9 @@ class Phones:
     """スマホ数台ぶんの画面を作る"""
     def __init__(self, browser, url):
         self.browser, self.url, self.all, self.errors = browser, url, {}, []
-    def open(self, name, w=390, h=844):
+    def open(self, name, w=390, h=844, fixed=True):
         ctx = self.browser.new_context(viewport={"width": w, "height": h}, has_touch=True, is_mobile=True)
+        if fixed: ctx.add_init_script("window.__fixedItems = true")   # 品物を決まった場所に置く(テストで場所が分かるように)
         ctx.route("https://www.gstatic.com/firebasejs/**", lambda route: route.fulfill(
             content_type="text/javascript", body=FAKE[route.request.url.rsplit("/", 1)[1]]))
         uid = "uid_" + name

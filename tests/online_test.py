@@ -91,6 +91,30 @@ with sync_playwright() as p:
     check(not get_at(gp + "/caught"), "隠れている C は横に来ても捕まらない")
     a.screenshot(path=f"{SHOTS}/o2_boss.png")
 
+    # ---------- ロッカー(オンライン) ----------
+    act = lambda pg, a_: pg.locator(f"#act .act-btn[data-act={a_}]").dispatch_event("pointerdown")
+    acts = lambda pg: pg.evaluate("[...document.querySelectorAll('#act .act-btn')].map(b => b.dataset.act).join(',')")
+    warp(c, 13.5, 7.5); wait(c, 300)
+    check(acts(c) == "open" and c.is_visible("#act"), "事務所のロッカーの扉の前に立つと「開ける」ボタン")
+    act(c, "open"); wait(c, 400)
+    check(get_at(gp + "/lockers/L3") == {"o": 1} and acts(c) == "enter,close", "開けると「入る」「閉める」。開いたことがネットに書かれる")
+    check(G(a, "G.lockers[3].open") is True, "店長の画面でも扉が開く")
+    act(c, "enter"); wait(c, 400)
+    check(get_at(gp + "/lockers/L3/w") == "uid_C" and acts(c) == "close,exit", "入ると中にいることが書かれる。ボタンは「閉める」「出る」")
+    check(G(a, "G.thieves.find(t => t.id === 'uid_C').hidden") is False, "開いたままだと店長から丸見え")
+    act(c, "close"); wait(c, 500)
+    check(G(a, "G.thieves.find(t => t.id === 'uid_C').hidden") is True and acts(c) == "open", "閉めると店長から見えない。中からは「開ける」だけ")
+    c.keyboard.down("ArrowDown"); wait(c, 400); c.keyboard.up("ArrowDown")
+    check(abs(G(c, "G.me.y") - 8.5) < 0.05, "ロッカーの中では動けない")
+    a.evaluate("GR.G.me.x = 13.5; GR.G.me.y = 7.5"); wait(a, 500)
+    check(not get_at(gp + "/caught"), "閉まったロッカーの前に店長が来ても捕まらない")
+    check(a.evaluate("lockerActions(GR.G.me).join()") == "open", "店長にも「開ける」ボタン")
+    a.screenshot(path=f"{SHOTS}/o2_locker_boss.png")
+    a.evaluate("GR.G.me.x = 13.5; GR.G.me.y = 5.5"); wait(a, 300)
+    act(c, "open"); wait(c, 300); act(c, "exit"); wait(c, 400)
+    check(get_at(gp + "/lockers/L3") == {"o": 1} and abs(G(c, "G.me.y") - 7.5) < 0.05, "「開ける」→「出る」で外へ。扉は開いたまま")
+    c.screenshot(path=f"{SHOTS}/o2_locker_open.png")
+
     # ---------- 捕まえる ----------
     warp(b, 10.5, 15.5); b.evaluate("GR.G.me.carry = ['meat']"); wait(b, 400)
     a.evaluate("GR.G.me.x = 10.5; GR.G.me.y = 16.4"); wait(a, 300)
@@ -250,10 +274,10 @@ with sync_playwright() as p:
     chip(h, "ネズミ捕り"); tap_tile(h, 8, 12); wait(h, 300)
     check([(d["type"], d["x"], d["y"]) for d in traps().values()] == [("rat", 8, 12)], "マップをタップするとトラップが置かれる")
     check(h.is_visible("#prepTraps"), "1個置いたら一覧にもどる")
-    chip(h, "ネズミ捕り"); tap_tile(h, 7, 12); wait(h, 300)
+    chip(h, "ネズミ捕り"); tap_tile(h, 5, 12); wait(h, 300)
     chip(h, "ネズミ捕り")
     check(len(traps()) == 2 and "2個まで" in h.inner_text("#prepHint") and h.is_visible("#prepTraps"), "同じ種類は2個まで")
-    tap_tile(h, 7, 12); wait(h, 300)
+    tap_tile(h, 5, 12); wait(h, 300)
     check(len(traps()) == 1, "置いたトラップをタップで外せる")
     chip(h, "ネズミ捕り"); tap_tile(h, 7, 10); wait(h, 300)
     check(len(traps()) == 1 and "置けない" in h.inner_text("#prepHint"), "調理台の上には置けない")
@@ -267,7 +291,7 @@ with sync_playwright() as p:
     tap_tile(h, 6, 12); wait(h, 500)
     check(get_at(r3 + "/match/coins/uid_H") == 100 and not get_at(g3 + "/gear/uid_H/buzzer") and len(traps()) == 1, "外すと30コインもどる")
     chip(h, "防犯ブザー"); tap_tile(h, 6, 12); wait(h, 500)
-    chip(h, "すべる床"); tap_tile(h, 7, 12); wait(h, 300)
+    chip(h, "すべる床"); tap_tile(h, 5, 13); wait(h, 300)
     check(len(traps()) == 3 and get_at(r3 + "/match/coins/uid_H") == 70, "トラップは3個まで置ける")
     chip(h, "すべる床")
     check(len(traps()) == 3 and "3個まで" in h.inner_text("#prepHint"), "4個目は選べない")
@@ -298,7 +322,13 @@ with sync_playwright() as p:
     # コイン: 出口で半分、捕まると半分取られる
     warp(i_, 5.2, 15.5); wait(i_, 2200); hold_space([i_], 1200); warp(i_, 9.5, 25.4); wait(i_, 600)
     check(get_at(r3 + "/match/coins/uid_I") == 35, f"持ち出した点数の半分がコインに(30→{get_at(r3 + '/match/coins/uid_I')})")
-    warp(j, 12.5, 15.5); wait(j, 300); h.evaluate("GR.G.me.x = 12.5; GR.G.me.y = 15.9"); wait(h, 800)
+    warp(j, 17.5, 15.5); wait(j, 300)
+    for a_ in ("open", "enter", "close"): j.locator(f"#act .act-btn[data-act={a_}]").dispatch_event("pointerdown"); wait(j, 300)
+    h.evaluate("GR.G.me.x = 17.5; GR.G.me.y = 15.5"); wait(h, 600)
+    check(not get_at(g3 + "/caught"), "閉まったロッカーの前では捕まらない")
+    h.locator("#act .act-btn[data-act=open]").dispatch_event("pointerdown"); wait(h, 800)
+    check(get_at(g3 + "/caught/uid_J") is True, "店長がロッカーを開けると、中の泥棒を捕まえる")
+    check(not (get_at(g3 + "/lockers/L11") or {}).get("w") and G(j, "G.me.out") is True, "捕まった泥棒はロッカーから出される")
     check(get_at(r3 + "/match/coins/uid_J") == 50 and get_at(r3 + "/match/coins/uid_H") == 70 + 50 + 30,
           f"店長に捕まるとコインの半分が店長へ(+ほうび30) J={get_at(r3 + '/match/coins/uid_J')} H={get_at(r3 + '/match/coins/uid_H')}")
 
@@ -332,11 +362,29 @@ with sync_playwright() as p:
     check(G(k, "!!GR.G.thieves[0].slip"), "すべる床を踏むとすべる")
     x1 = G(k, "G.thieves[0].x"); wait(k, 300)
     check(G(k, "G.thieves[0].x") > x1 + 0.3, "手をはなしても勝手に進む")
-    # ロッカーの鍵 → 隠れられない
-    k.evaluate("GR.G.thieves[0].slip = null; GR.G.traps.push({id:'l1', type:'lock', x:2, y:2}); GR.G.thieves[0].x = 2.5; GR.G.thieves[0].y = 2.5"); wait(k, 300)
-    check(G(k, "G.thieves[0].hidden") is False, "ロッカーの鍵がかかった📦には隠れられない")
-    k.evaluate("GR.G.thieves[0].x = 15.5; GR.G.thieves[0].y = 5.5"); wait(k, 300)
-    check(G(k, "G.thieves[0].hidden") is True, "ほかの📦には隠れられる")
+    check("ロッカーの鍵" not in k.evaluate("Object.values(TRAPS).map(t => t.name).join()"), "トラップにロッカーの鍵はもうない")
+    # 📦: 隠れられる
+    k.evaluate("GR.G.thieves[0].slip = null; GR.G.thieves[0].x = 15.5; GR.G.thieves[0].y = 5.5"); wait(k, 300)
+    check(G(k, "G.thieves[0].hidden") is True, "📦には隠れられる")
+    # ロッカー(練習): 冷蔵室のロッカー L0 は (4,1)、扉は下向き
+    kact = lambda a_: k.locator(f"#act .act-btn[data-act={a_}]").dispatch_event("pointerdown")
+    check(k.evaluate("isSolid(4, 1)") and G(k, "G.lockers.length") == 13, "ロッカーは13個。家具なので通れない")
+    k.evaluate("GR.G.thieves[0].x = 3.5; GR.G.thieves[0].y = 1.5"); wait(k, 200)
+    check(not k.is_visible("#act"), "扉の前じゃない(横)ではボタンが出ない")
+    k.evaluate("GR.G.thieves[0].x = 4.5; GR.G.thieves[0].y = 2.5"); wait(k, 200)
+    kact("open"); wait(k, 100); kact("enter"); wait(k, 200)
+    check(G(k, "G.lockers[0].who") == "t0" and G(k, "G.thieves[0].hidden") is False, "練習でも入れる(開いたままだと見える)")
+    k.screenshot(path=f"{SHOTS}/o12_locker_in_open.png")
+    k.evaluate("GR.G.thieves[1].x = 4.5; GR.G.thieves[1].y = 2.5")
+    check(k.evaluate("lockerActions(GR.G.thieves[1]).join()") == "close", "1つのロッカーに入れるのは1人")
+    k.evaluate("GR.G.thieves[1].x = 1.5; GR.G.thieves[1].y = 8.5")
+    kact("close"); wait(k, 300)
+    check(G(k, "G.thieves[0].hidden") is True, "閉めると見えない")
+    k.evaluate("GR.G.boss.x = 4.5; GR.G.boss.y = 2.5"); wait(k, 300)
+    check(G(k, "G.thieves[0].out") is False, "閉まっていれば店長が前に来ても大丈夫")
+    k.evaluate("doLocker(GR.G.boss, 'open')"); wait(k, 200)
+    check(G(k, "G.thieves[0].out") is True and G(k, "G.lockers[0].who") is None and G(k, "G.lockers[0].open") is True, "店長が開けると捕まる(扉は開いたまま)")
+    k.screenshot(path=f"{SHOTS}/o12_locker_caught.png")
 
     # 練習で店長: トラップを置いてからスタート
     k.evaluate("GR.G.time = 0.1"); wait(k, 300); k.click("#again"); wait(k, 300)
@@ -456,6 +504,45 @@ with sync_playwright() as p:
     d.screenshot(path=f"{SHOTS}/o13_watch_boss.png")
     d.evaluate("GR.G.time = 0.1"); wait(d, 400)
     check(d.is_visible("#again") and not d.is_visible("#resLobby"), "練習の結果には「もう一度」")
+
+    # ---------- CPUとロッカー(練習) ----------
+    cp = ph.open("CP")
+    cp.click("[data-role=boss]"); wait(cp, 300); cp.click("#prepOk"); wait(cp, 200)
+    cp.evaluate("""const t = GR.G.thieves[0]; GR.G.boss.x = 18.5; GR.G.boss.y = 24.5; GR.G.thieves[1].ai.wait = 99; GR.G.thieves[1].x = 1.5; GR.G.thieves[1].y = 2.5;
+      t.ai.wait = 0; t.x = 4.5; t.y = 2.5; t.ai.mode = 'locker'; t.ai.path = []; t.ai.seq = ['open', 'enter', 'close']; t.ai.seqT = 0.2""")
+    wait(cp, 900)
+    check(G(cp, "G.lockers[0].who") == "t0" and G(cp, "G.lockers[0].open") is False and G(cp, "G.thieves[0].hidden") is True, "CPU泥棒がロッカーを開けて入って閉める")
+    wait(cp, 2300)
+    check(G(cp, "G.lockers[0].who") is None and G(cp, "G.lockers[0].open") is True and G(cp, "G.thieves[0].hidden") is False, "店長がいなければ、しばらくして出てくる(扉は開いたまま)")
+    cp.evaluate("""const t = GR.G.thieves[0]; t.ai.wait = 99; GR.G.lockers[2].who = t.id; t.x = 1.5; t.y = 7.5;
+      const b = GR.G.boss; b.cpu = true; b.x = 3.5; b.y = 7.5; b.mode = 'patrol'; b.path = []; b.check = GR.G.lockers[2]; b.repath = 0""")
+    wait(cp, 1200)
+    check(G(cp, "G.thieves[0].out") is True and G(cp, "G.lockers[2].open") is True, "CPU店長がロッカーを調べて、中の泥棒を捕まえる")
+
+    # ---------- 品物の場所はランダム ----------
+    rnd = ph.open("RND", fixed=False)
+    lays = []
+    for _ in range(3):
+        rnd.evaluate("newGame('boss')"); wait(rnd, 100)
+        lays.append(rnd.evaluate("GR.G.items.map(i => [i.type, Math.floor(i.x), Math.floor(i.y)])"))
+    check(len({str(l) for l in lays}) == 3, "練習: 毎回ちがう場所に品物が出る")
+    check(all(sorted(t for t, _, _ in l) == sorted(s[0] for s in rnd.evaluate("ITEM_SPOTS")) for l in lays), "品物の種類と数は同じ")
+    many = rnd.evaluate("Array.from({length: 200}, () => randomItemSpots())")
+    vault_ok = all(12 <= y <= 13 and x >= 11 for l in many for t, x, y in l if t == "safe")
+    door_ok = all(min(((x + 0.5 - dx) ** 2 + (y + 0.5 - dy) ** 2) ** 0.5 for dx, dy in ((9.5, 25.5), (10.5, 25.5), (8.5, 0.5), (9.5, 0.5))) > 3 for l in many for _, x, y in l)
+    gap_ok = all(max(abs(a[1] - b[1]), abs(a[2] - b[2])) >= 2 for l in many for i, a in enumerate(l) for b in l[i + 1:])
+    floor_ok = rnd.evaluate("Array.from({length: 200}, () => randomItemSpots()).every(l => l.every(([, x, y]) => MAP[y][x] === '.' && !isLockerFront(x, y)))")
+    check(vault_ok and door_ok and gap_ok and floor_ok, f"金庫は金庫室、出入口から3マス以内なし、品物どうしは離れている、床の上(200回)")
+    ra, rb = ph.open("RA", fixed=False), ph.open("RB", fixed=False)
+    ra.click("#goOnline"); ra.fill("#lbName", "らん"); ra.click("#lbCreate"); wait(ra)
+    code6 = ra.inner_text("#lbRoomCode"); g6 = f"rooms/gr-{code6}/game"
+    rb.click("#goOnline"); rb.fill("#lbName", "だむ"); rb.fill("#lbCode", code6); rb.click("#lbJoin"); wait(rb, 500)
+    ra.click("#lbStart"); wait(ra, 800)
+    spots = get_at(g6 + "/spots") or {}
+    pa = ra.evaluate("GR.G.items.map(i => [i.type, Math.floor(i.x), Math.floor(i.y)].join()).join(';')")
+    pb_ = rb.evaluate("GR.G.items.map(i => [i.type, Math.floor(i.x), Math.floor(i.y)].join()).join(';')")
+    check(len(spots) == 13 and pa == pb_ and pa == ";".join(spots[f"i{n}"] for n in range(13)), "オンライン: ホストが決めた場所がみんなに届く")
+    rb.screenshot(path=f"{SHOTS}/o14_random_items.png")
 
     check(not ph.errors, "エラーなし " + "; ".join(ph.errors[:5]))
     browser.close()
