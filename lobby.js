@@ -8,7 +8,7 @@ import {
   db, auth, ref, get, set, update, remove, onValue,
   onDisconnect, serverTimestamp, runTransaction, signInAnonymously
 } from "./firebase.js";
-import { sync as syncGame, makeGame } from "./online.js";
+import { sync as syncGame, makeMatch } from "./online.js";
 
 const PREFIX = "gr-";   // 富豪大富豪のルームとぶつからないように頭につける
 const MAX_PLAYERS = 8;
@@ -216,7 +216,8 @@ $("lbStart").addEventListener("click", () => guard(async () => {
   const list = playerList();
   if (list.filter(isOnline).length < MIN_PLAYERS) return;
   // 切断中の人はこの試合に入れない
-  const changes = { "meta/started": true, "meta/startedAt": serverTimestamp(), game: makeGame(list.filter(isOnline)) };
+  const { match, game } = makeMatch(list.filter(isOnline));
+  const changes = { "meta/started": true, "meta/startedAt": serverTimestamp(), match, game };
   for (const p of list) if (!isOnline(p)) changes["players/" + p.id] = null;
   await update(ref(db, roomPath(code)), changes);
 }));
@@ -224,7 +225,7 @@ $("lbStart").addEventListener("click", () => guard(async () => {
 // ロビーにもどす(待合室のボタンと、結果画面のボタン)
 const backToRoom = () => guard(async () => {
   if (!room || room.meta.host !== uid) return;
-  await update(ref(db, roomPath(code)), { "meta/started": false, game: null });
+  await update(ref(db, roomPath(code)), { "meta/started": false, game: null, match: null });
 });
 $("lbReset").addEventListener("click", backToRoom);
 $("resLobby").addEventListener("click", backToRoom);

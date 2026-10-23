@@ -1,14 +1,17 @@
-/* オンライン対戦の通信係(②一緒に動く)
-   ゲームのデータは rooms/gr-1234/game に置く:
-     round:   試合ごとの番号(スタートするたびに変わる)
-     boss:    店長の人のID(今は入った順の1番目)
+/* オンライン対戦の通信係
+   全体の流れ(rooms/gr-1234/match): 全員が1回ずつ店長をやり、合計点で順位を決める
+     order:  店長の順番(入った順の人のID)、names: { 人のID: 名前 }
+     round:  今が何ラウンド目か(0から)、totals: { 人のID: 合計点 }
+   1ラウンドのデータ(rooms/gr-1234/game):
+     round:   ラウンドごとの番号(ラウンドが変わるたびに変わる)、no: 何ラウンド目か
+     boss:    店長の人のID(match.order[no])
      players: { 人のID: { name, i: 入った順 } }   … この試合に出ている人
      items:   { i0: true, i1: true, … }          … 残っている品物(取られたら消える)
      pos:     { 人のID: { x, y, f: 向き, in: 店に入ったか, h: 隠れているか, g: 盗む長押しの進み具合,
                           c: 手持ち("meat,wine" のように), b: 持ち出した点数 } }
      caught:  { 人のID: true }                   … 店長に捕まった泥棒
      t:       残り秒数(ホストが1秒ごとに書く)
-     phase:   "play" か "end"、why: 終わった理由
+     phase:   "play" か "end"、why: 終わった理由、scores: { 人のID: このラウンドの点数 }
    自分の pos は自分だけが書く。捕まえた記録は店長、時間と終わりはホストが書く。 */
 import { db, ref, set, update, runTransaction } from "./firebase.js";
 
@@ -21,19 +24,35 @@ let S = null;          // 今の試合 { code, uid, round, … }
 let room = null;       // ルームの最新データ
 let sendTimer = null, hostTimer = null;
 
-const gamePath = () => "rooms/gr-" + S.code + "/game";
+const roomPathOf = () => "rooms/gr-" + S.code;
+const gamePath = () => roomPathOf() + "/game";
 const isHost = () => !!(S && room && room.meta && room.meta.host === S.uid);
 const itemIds = game => Object.keys(game.items || {}).filter(k => game.items[k]).map(k => +k.slice(1));
 
+const online = id => !!(room && room.players && room.players[id] && room.players[id].online !== false);
+
 /* ホストがスタートを押したときに作るデータ。list は入った順に並んだ、つながっている人 */
-export function makeGame(list) {
+export function makeMatch(list) {
+  const match = { order: list.map(p => p.id), names: {}, totals: {}, round: 0 };
+  for (const p of list) { match.names[p.id] = p.name || "?"; match.totals[p.id] = 0; }
+  return { match, game: makeRound(match, 0, match.order) };
+}
+// r ラウンド目のデータ。ids = 出る人(入った順)
+function makeRound(match, r, ids) {
   const players = {}, items = {};
-  list.forEach((p, i) => { players[p.id] = { name: p.name || "?", i }; });
+  ids.forEach((id, i) => { players[id] = { name: match.names[id] || "?", i }; });
   GR.ITEM_SPOTS.forEach((_, i) => { items["i" + i] = true; });
   return {
-    round: Date.now() + "-" + Math.floor(Math.random() * 1e6),
-    boss: list[0].id, players, items, t: GR.ROUND_SEC, phase: "play",
+    round: Date.now() + "-" + Math.floor(Math.random() * 1e6), no: r,
+    boss: match.order[r], players, items, t: GR.ROUND_SEC, phase: "play",
   };
+}
+// 次に店長をやる人のラウンド番号(つながっている人だけ)。もうなければ null
+function nextRound() {
+  const m = room && room.match;
+  if (!m) return null;
+  for (let r = (m.round || 0) + 1; r < m.order.length; r++) if (online(m.order[r])) return r;
+  return null;
 }
 
 /* ルームのデータが変わるたびに lobby.js から呼ばれる。試合中(結果画面も)なら true を返す */
@@ -57,6 +76,7 @@ function start(game, uid, code) {
   const G = GR.startOnline({
     myId: uid, bossId: game.boss, players, itemIds: itemIds(game),
     time: game.t ?? GR.ROUND_SEC, hooks: { grab, caught },
+    label: room.match ? `ラウンド${(game.no || 0) + 1}/${room.match.order.length}` : "",
   });
   // ページを開き直したときは、さっきの自分の続きから
   const p = game.pos && game.pos[uid];
@@ -117,10 +137,7 @@ function apply(game) {
   if (game.t !== S.lastT) { S.lastT = game.t; if (!isHost()) G.time = game.t; }
 
   if (game.phase === "end" && G.phase === "play") showEnd(game);
-  if (G.phase === "end") {
-    document.getElementById("resLobby").classList.toggle("hidden", !isHost());
-    document.getElementById("resWait").classList.toggle("hidden", isHost());
-  }
+  if (G.phase === "end") resultButtons();
 }
 
 /* 自分の状態を送る(変わったときだけ) */
@@ -169,8 +186,26 @@ function hostTick() {
   } else if (!why) S.pending = null;
   if (why && !S.ending) {
     S.ending = true;
-    update(ref(db, gamePath()), { phase: "end", why, t }).catch(() => { S && (S.ending = false); });
+    // 終わり + このラウンドの点数 + 合計点を、まとめて書く
+    const scores = roundScores(game, G), totals = (room.match && room.match.totals) || {};
+    const ch = { "game/phase": "end", "game/why": why, "game/t": t, "game/scores": scores };
+    if (room.match) for (const [id, s] of Object.entries(scores)) ch["match/totals/" + id] = (totals[id] || 0) + s;
+    update(ref(db, roomPathOf()), ch).catch(() => { S && (S.ending = false); });
   }
+}
+
+// このラウンドの点数。泥棒 = 持ち出した点数。店長 = 捕まえた人数 × BOSS_PER_CATCH + 守った点数 × BOSS_KEEP_RATE
+function roundScores(game, G) {
+  const pos = game.pos || {}, caughtList = game.caught || {}, scores = {};
+  let stolen = 0, catches = 0;
+  for (const id of Object.keys(game.players)) {
+    if (id === game.boss) continue;
+    const b = id === S.uid ? G.me.bank : ((pos[id] && pos[id].b) || 0);
+    scores[id] = b; stolen += b;
+    if (caughtList[id] === true) catches++;
+  }
+  scores[game.boss] = catches * GR.BOSS_PER_CATCH + Math.floor(Math.max(0, GR.TOTAL_PTS - stolen) * GR.BOSS_KEEP_RATE);
+  return scores;
 }
 
 function endReason(game, G) {
@@ -188,16 +223,60 @@ function endReason(game, G) {
 
 /* 結果画面 */
 const WHY = { time: "閉店時間！", allCaught: "全員つかまった！", clear: "ぜんぶ盗まれた！", bossLeft: "店長がいなくなった" };
+const MEDAL = ["🥇", "🥈", "🥉"];
 function showEnd(game) {
-  const G = GR.G, esc = GR.escapeHtml;
-  const caughtList = game.caught || {}, pos = game.pos || {};
-  const rows = G.thieves
-    .map(t => ({ name: t.name, bank: t === G.me ? t.bank : ((pos[t.id] && pos[t.id].b) || 0), caught: !!caughtList[t.id], me: t === G.me }))
-    .sort((a, b) => b.bank - a.bank);
-  const stolen = rows.reduce((s, r) => s + r.bank, 0);
-  const score = G.role === "boss" ? `守った ${GR.TOTAL_PTS - stolen}点` : `${G.me.bank}点`;
-  let note = `店長 ${esc(G.boss.name)}：捕まえた ${G.boss.caught}人 ／ 盗まれた ${stolen}点<br>` +
-    rows.map(r => `${r.me ? "<b>" : ""}${esc(r.name)}：${r.bank}点${r.caught ? "(捕まった)" : ""}${r.me ? "</b>" : ""}`).join("<br>");
-  if (G.role === "thief") note += "<br><small>手に持ったままの品物は没収されます</small>";
-  GR.showResult(WHY[game.why] || "終了", score, note, true);
+  const G = GR.G, esc = GR.escapeHtml, m = room.match;
+  const sc = game.scores || {}, caughtList = game.caught || {};
+  const name = id => esc((m && m.names[id]) || (game.players[id] && game.players[id].name) || "?");
+  const final = nextRound() === null;
+  S.final = final;
+
+  // このラウンド: 店長が上、泥棒は点数の高い順
+  const thieves = Object.keys(game.players).filter(id => id !== game.boss).sort((a, b) => (sc[b] || 0) - (sc[a] || 0));
+  const row = (id, text, extra) => `<div class="rk${id === S.uid ? " me" : ""}"><span>${extra || ""}${name(id)}</span><b>${text}</b></div>`;
+  let html = `<div class="rk-head">ラウンド${(game.no || 0) + 1}${final ? "：" + (WHY[game.why] || "") : ""}</div>`;
+  html += row(game.boss, `${sc[game.boss] || 0}点`, "👨‍🍳 ");
+  html += `<div class="rk-note">捕まえた ${Object.values(caughtList).filter(v => v === true).length}人</div>`;
+  for (const id of thieves) html += row(id, `${sc[id] || 0}点${caughtList[id] ? "(捕まった)" : ""}`);
+
+  // 合計の順位(同じ点なら同じ順位)
+  let myRank = 0;
+  if (m) {
+    const ids = [...m.order].sort((a, b) => (m.totals[b] || 0) - (m.totals[a] || 0));
+    html += `<div class="rk-head">合計${final ? "(最終)" : ""}</div>`;
+    ids.forEach(id => {
+      const rank = 1 + ids.filter(o => (m.totals[o] || 0) > (m.totals[id] || 0)).length;
+      if (id === S.uid) myRank = rank;
+      html += row(id, `${m.totals[id] || 0}点`, `${MEDAL[rank - 1] || rank + "位"} `);
+    });
+  }
+  const mine = sc[S.uid] || 0;
+  GR.showResult(final ? "最終結果！" : (WHY[game.why] || "終了"),
+    final && myRank ? `${myRank}位` : `+${mine}点`,
+    `<div class="rank">${html}</div>` + (G.role === "thief" ? "<small>手に持ったままの品物は没収されます</small>" : ""), true);
 }
+
+/* 結果画面のボタン(ホストだけ見える) */
+function resultButtons() {
+  const host = isHost(), r = nextRound();
+  const next = document.getElementById("resNext"), back = document.getElementById("resLobby");
+  next.classList.toggle("hidden", !host || r === null);
+  if (r !== null) next.textContent = `次のラウンドへ(店長: ${room.match.names[room.match.order[r]] || "?"} さん)`;
+  back.classList.toggle("hidden", !host);
+  back.classList.toggle("ghost", r !== null);
+  back.textContent = r !== null ? "やめてロビーへ" : "ロビーにもどす";
+  document.getElementById("resWait").classList.toggle("hidden", host);
+  document.getElementById("resWait").textContent = r !== null ? "ホストが次のラウンドを始めるのを待っています" : "ホストがロビーにもどすのを待っています";
+}
+
+let starting = false;
+document.getElementById("resNext").addEventListener("click", async () => {
+  if (starting || !isHost() || !room || !room.game || room.game.phase !== "end" || !room.match) return;
+  const r = nextRound();
+  if (r === null) return;
+  const ids = room.match.order.filter(online);
+  starting = true;
+  try { await update(ref(db, roomPathOf()), { "match/round": r, game: makeRound(room.match, r, ids) }); }
+  catch (e) { console.error(e); }
+  finally { starting = false; }
+});

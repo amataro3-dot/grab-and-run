@@ -139,6 +139,48 @@ with sync_playwright() as p:
     check(b.is_visible("#lbRoom") and not b.is_visible("#hud") and not b.is_visible("#door"), "ホストが抜けたら試合は終わってロビーへ")
     check(get_at(f"rooms/gr-{code}/meta/host") == "uid_B", "B がホストを引きつぐ")
 
+    # ---------- ③ラウンド回し: 3人で3ラウンド ----------
+    e, f, g = ph.open("E"), ph.open("F"), ph.open("G")
+    e.click("#goOnline"); e.fill("#lbName", "いち"); e.click("#lbCreate"); wait(e)
+    code2 = e.inner_text("#lbRoomCode"); rp = f"rooms/gr-{code2}"
+    for pg, n in ((f, "に"), (g, "さん")):
+        pg.click("#goOnline"); pg.fill("#lbName", n); pg.fill("#lbCode", code2); pg.click("#lbJoin"); wait(pg, 500)
+    e.click("#lbStart"); wait(e, 700)
+    m = get_at(rp + "/match")
+    check(m and m["order"] == ["uid_E", "uid_F", "uid_G"] and m["round"] == 0, "試合全体のデータ(店長の順番)ができる")
+    check("ラウンド1/3" in f.inner_text("#doorNote"), "入り口画面にラウンド1/3")
+    f.click("[data-enter=front]"); g.click("[data-enter=front]"); wait(f, 300)
+    warp(f, 5.2, 15.5); wait(f, 300); hold_space([f], 1200); warp(f, 9.5, 25.4); wait(f, 400)
+    warp(g, 10.5, 15.5); wait(g, 300); e.evaluate("GR.G.me.x = 10.5; GR.G.me.y = 15.9"); wait(e, 600)
+    e.evaluate("GR.G.time = 0.5"); wait(e, 1500)
+    sc = get_at(rp + "/game/scores")
+    check(sc == {"uid_E": 50 + (520 - 10) // 4, "uid_F": 10, "uid_G": 0}, f"ラウンドの点数(店長 = 捕まえた50 + 守った点の4分の1) {sc}")
+    check(get_at(rp + "/match/totals") == sc, "合計点に足される")
+    check("+10点" in f.inner_text("#resScore") and "合計" in f.inner_text("#resNote"), "結果にこのラウンドの点と合計")
+    check(e.is_visible("#resNext") and "に さん" in e.inner_text("#resNext") and not f.is_visible("#resNext"), "ホストに「次のラウンドへ(店長: に さん)」")
+    check("次のラウンド" in f.inner_text("#resWait"), "ほかの人は次のラウンドを待つ")
+    f.screenshot(path=f"{SHOTS}/o5_round1.png")
+
+    e.click("#resNext"); wait(e, 800)
+    check(get_at(rp + "/game/boss") == "uid_F" and get_at(rp + "/match/round") == 1, "ラウンド2の店長は F")
+    check(G(f, "G.role") == "boss" and e.is_visible("#door") and "ラウンド2/3" in e.inner_text("#doorNote"), "F が店長、E と G は入り口を選ぶ")
+    check(G(e, "G.me.bank") == 0 and G(e, "G.items.length") == 13, "品物と点数は新しいラウンドで元どおり")
+    e.click("[data-enter=back]"); wait(e, 200)
+    e.evaluate("GR.G.time = 0.5"); wait(e, 1500)   # ホスト(E)の時計で終わる
+    check(get_at(rp + "/match/totals/uid_F") == 10 + 50 * 0 + 520 // 4, "ラウンド2: 店長 F の点が合計に足される")
+    e.click("#resNext"); wait(e, 800)
+    check(get_at(rp + "/game/boss") == "uid_G", "ラウンド3の店長は G")
+    e.evaluate("GR.G.time = 0.5"); wait(e, 1500)
+    for n, pg in (("E", e), ("F", f), ("G", g)):
+        check("最終結果" in pg.inner_text("#resTitle") and "位" in pg.inner_text("#resScore"), f"{n} に最終結果と順位")
+    check(not e.is_visible("#resNext") and e.inner_text("#resLobby") == "ロビーにもどす", "最後は「ロビーにもどす」だけ")
+    tot = get_at(rp + "/match/totals")
+    top = max(tot, key=tot.get)
+    check("🥇" in e.inner_text("#resNote") and get_at(rp + "/match/names")[top] in e.inner_text("#resNote").split("🥇")[1].split("\n")[0], f"1位に🥇 {tot}")
+    e.screenshot(path=f"{SHOTS}/o6_final.png")
+    e.click("#resLobby"); wait(e, 600)
+    check(get_at(rp + "/match") is None and f.is_visible("#lbRoom"), "ロビーにもどると試合全体のデータも消える")
+
     # ---------- ひとりで練習は今まで通り ----------
     d = ph.open("D")
     d.click("[data-role=thief][data-door=front]"); wait(d, 500)

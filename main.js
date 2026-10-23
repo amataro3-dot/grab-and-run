@@ -86,6 +86,8 @@ const GRAB_RANGE = 0.9;       // 盗める距離
 const R = 0.33;               // キャラの大きさ(半径)
 const VIEW_TILES = 9;         // 画面の横に見えるマス数
 const ONLINE_CATCH_DIST = 0.8; // オンラインの捕まえる距離(通信のズレをごまかすため少し大きめ)
+const BOSS_PER_CATCH = 50;    // 店長の点数(仮): 1人捕まえるごと
+const BOSS_KEEP_RATE = 0.25;  // 店長の点数(仮): 守った品物の点数 × この割合
 
 const THIEF_COLORS = ["#ffcc33", "#5dade2", "#58d68d", "#f1948a", "#bb8fce", "#f5b041", "#76d7c4", "#ec7fd0"];
 
@@ -551,8 +553,8 @@ function startOnline(opts) {
   $("hud").classList.remove("hidden");
   $("grab").classList.toggle("hidden", role !== "thief");
   $("door").classList.toggle("hidden", role !== "thief" || G.me.in);
-  $("doorNote").textContent = `あなたは泥棒。店長は ${boss.name} さん`;
-  if (role === "boss") popup(boss, "あなたが店長!");
+  $("doorNote").textContent = `${opts.label || ""}　あなたは泥棒。店長は ${boss.name} さん`;
+  if (role === "boss") popup(boss, (opts.label ? opts.label + " " : "") + "あなたが店長!");
   return G;
 }
 // 泥棒が入り口を選んで店に入る
@@ -581,10 +583,12 @@ function showResult(title, score, noteHtml, online) {
   $("resScore").textContent = score;
   $("resNote").innerHTML = noteHtml;
   $("again").classList.toggle("hidden", !!online);
-  if (!online) { $("resLobby").classList.add("hidden"); $("resWait").classList.add("hidden"); }
+  if (!online) for (const id of ["resLobby", "resNext", "resWait"]) $(id).classList.add("hidden");
 }
 
-window.GR = { startOnline, stopOnline, showResult, escapeHtml, popup, vibrate, ITEMS, ITEM_SPOTS, TOTAL_PTS, ROUND_SEC, get G() { return G; } };
+window.GR = {
+  startOnline, stopOnline, showResult, escapeHtml, popup, vibrate,
+  ITEMS, ITEM_SPOTS, TOTAL_PTS, ROUND_SEC, BOSS_PER_CATCH, BOSS_KEEP_RATE, get G() { return G; } };
 
 function finish(why) {
   const stolen = G.thieves.reduce((s, t) => s + t.bank, 0);

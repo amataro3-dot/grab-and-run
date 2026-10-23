@@ -90,3 +90,13 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 .players li.off { color: var(--muted); }
 .players li.off small { color: var(--muted); }
 .sub.small { font-size: 12px; }
+
+/* ---------- オンラインの結果(順位表) ---------- */
+.rank { width: 100%; max-width: 320px; margin: 4px auto; text-align: left; font-size: 15px; color: var(--fg); }
+.rk-head { margin: 10px 0 2px; font-size: 13px; color: var(--muted); border-bottom: 1px solid rgba(255, 255, 255, 0.15); }
+.rk { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
+.rk span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rk b { color: var(--accent); white-space: nowrap; }
+.rk.me span { color: var(--accent); font-weight: 700; }
+.rk-note { font-size: 12px; color: var(--muted); margin: -2px 0 2px 1.6em; }
+#result .btn { min-width: 240px; }
