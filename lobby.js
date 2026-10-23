@@ -8,6 +8,7 @@ import {
   db, auth, ref, get, set, update, remove, onValue,
   onDisconnect, serverTimestamp, runTransaction, signInAnonymously
 } from "./firebase.js";
+import { sync as syncGame, makeGame } from "./online.js";
 
 const PREFIX = "gr-";   // 富豪大富豪のルームとぶつからないように頭につける
 const MAX_PLAYERS = 8;
@@ -27,6 +28,7 @@ let uid = null;     // 自分のID(Firebase の匿名ログインでもらう)
 let code = null;    // 今いるルームのコード
 let room = null;    // 今いるルームのデータ
 let unsub = null;   // ルームの見張りをやめる関数
+let lastView = "";  // 待合室の表示に使うデータ(変わったときだけ描き直す)
 
 /* ---------- 画面の切りかえ ---------- */
 function showLobby(view) {
@@ -130,6 +132,9 @@ function enterRoom(c) {
   update(ref(db, me), { online: true });
   onDisconnect(ref(db, me + "/online")).set(false);
 
+  $("lbRoomCode").textContent = c;
+  showLobby("room");
+  lastView = "";
   if (unsub) unsub();
   unsub = onValue(ref(db, roomPath(c)), snap => {
     if (c !== code) return;
@@ -137,10 +142,12 @@ function enterRoom(c) {
     if (!room) return leaveLocal("ルームがなくなりました");
     if (!room.players || !room.players[uid]) return leaveLocal("ルームから外れました");
     ensureHost();
-    render();
+    // 試合中はゲーム画面、そうでなければ待合室
+    const playing = syncGame(room, uid, c);
+    $("lobby").classList.toggle("hidden", playing);
+    const view = JSON.stringify([room.meta, room.players]);
+    if (view !== lastView) { lastView = view; render(); }
   });
-  $("lbRoomCode").textContent = c;
-  showLobby("room");
 }
 
 // 入った順に並べた参加者 [{ id, name, joinedAt, online }]
@@ -194,7 +201,7 @@ function render() {
   $("lbCount").textContent = `${list.length} / ${MAX_PLAYERS}人`;
 
   let note;
-  if (started) note = "スタートしました！一緒に動く部分は次の回で作ります";
+  if (started) note = "試合中です。終わるまで待ってね";
   else if (iAmHost) note = onlineCount < MIN_PLAYERS ? `${MIN_PLAYERS}人以上そろったらスタートできます` : "みんなそろったらスタートを押してね";
   else note = "ホストがスタートするのを待っています";
   $("lbRoomMsg").textContent = note;
@@ -209,15 +216,18 @@ $("lbStart").addEventListener("click", () => guard(async () => {
   const list = playerList();
   if (list.filter(isOnline).length < MIN_PLAYERS) return;
   // 切断中の人はこの試合に入れない
-  const changes = { "meta/started": true, "meta/startedAt": serverTimestamp() };
+  const changes = { "meta/started": true, "meta/startedAt": serverTimestamp(), game: makeGame(list.filter(isOnline)) };
   for (const p of list) if (!isOnline(p)) changes["players/" + p.id] = null;
   await update(ref(db, roomPath(code)), changes);
 }));
 
-$("lbReset").addEventListener("click", () => guard(async () => {
+// ロビーにもどす(待合室のボタンと、結果画面のボタン)
+const backToRoom = () => guard(async () => {
   if (!room || room.meta.host !== uid) return;
-  await update(ref(db, roomPath(code) + "/meta"), { started: false });
-}));
+  await update(ref(db, roomPath(code)), { "meta/started": false, game: null });
+});
+$("lbReset").addEventListener("click", backToRoom);
+$("resLobby").addEventListener("click", backToRoom);
 
 $("lbLeave").addEventListener("click", () => guard(async () => {
   if (!code) return;
@@ -241,6 +251,7 @@ function leaveLocal(text) {
   if (unsub) { unsub(); unsub = null; }
   // 切れたときの自動書きこみも取り消す(消えたルームに書きこんで、ゴミが残らないように)
   if (code) onDisconnect(ref(db, roomPath(code) + "/players/" + uid + "/online")).cancel().catch(() => {});
+  syncGame(null); // 試合中なら片づける
   code = null;
   room = null;
   store.del(ROOM_KEY);

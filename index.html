@@ -60,6 +60,19 @@
   <div class="big" id="resScore">0点</div>
   <p class="sub" id="resNote"></p>
   <button class="btn" id="again">もう一度</button>
+  <button class="btn hidden" id="resLobby">ロビーにもどす</button>
+  <p class="sub hidden" id="resWait">ホストがロビーにもどすのを待っています</p>
+</section>
+
+<!-- オンライン: 泥棒が入り口を選ぶ -->
+<section id="door" class="overlay hidden">
+  <h1>どこから入る？</h1>
+  <p class="sub" id="doorNote">あなたは泥棒</p>
+  <div class="btns">
+    <button class="btn" data-enter="front">表の入り口</button>
+    <button class="btn" data-enter="back">裏口</button>
+  </div>
+  <p class="sub small">時間はもう進んでいるよ。急いで！</p>
 </section>
 
 <!-- ロビー(オンライン対戦の待合室) -->
