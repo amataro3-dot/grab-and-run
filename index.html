@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>GRAB &amp; RUN!</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<!-- 上の情報バー -->
+<div id="hud" class="hidden">
+  <div class="hud-row">
+    <span id="hudTime">3:00</span>
+    <span>持ち出し <b id="hudBank">0</b>点</span>
+  </div>
+  <div class="hud-row small">
+    <span>手持ち <span id="hudCarry">なし</span></span>
+    <span>足の速さ <b id="hudSpeed">100</b>%</span>
+  </div>
+</div>
+
+<!-- 盗むボタン(長押し) -->
+<button id="grab" class="hidden" disabled>
+  <span id="grabRing"></span>
+  <span id="grabLabel">盗む</span>
+</button>
+
+<!-- スタート画面 -->
+<section id="start" class="overlay">
+  <h1>GRAB &amp; RUN!</h1>
+  <p class="sub">試作版：ひとりで練習(CPUの店長つき)</p>
+  <div class="card">
+    <ul>
+      <li>左下あたりを指でなぞると移動(スティック)</li>
+      <li>品物の近くで「盗む」を長押し</li>
+      <li>出口(緑のマス)に戻ると点数になる</li>
+      <li>持つほど足が遅くなる</li>
+      <li>📦 の上にいると店長から見えない</li>
+      <li>店長に捕まったら、手持ちは没収で終了</li>
+    </ul>
+  </div>
+  <p class="sub">どこから入る？</p>
+  <div class="btns">
+    <button class="btn" data-door="front">表の入り口</button>
+    <button class="btn" data-door="back">裏口</button>
+  </div>
+</section>
+
+<!-- 結果画面 -->
+<section id="result" class="overlay hidden">
+  <h1 id="resTitle">終了</h1>
+  <div class="big" id="resScore">0点</div>
+  <p class="sub" id="resNote"></p>
+  <button class="btn" id="again">もう一度</button>
+</section>
+
+<script src="main.js"></script>
+</body>
+</html>
