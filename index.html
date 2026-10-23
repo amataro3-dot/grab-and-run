@@ -30,7 +30,11 @@
 <!-- スタート画面 -->
 <section id="start" class="overlay">
   <h1>GRAB &amp; RUN!</h1>
-  <p class="sub">試作版：CPUとひとりで練習</p>
+  <p class="sub">閉店後の店から盗んで逃げろ！</p>
+  <div class="btns">
+    <button class="btn online" id="goOnline">みんなで遊ぶ(オンライン)</button>
+  </div>
+  <p class="sub">― または CPU とひとりで練習 ―</p>
   <div class="card">
     <ul>
       <li>画面を指でなぞると移動(スティック)</li>
@@ -58,6 +62,42 @@
   <button class="btn" id="again">もう一度</button>
 </section>
 
+<!-- ロビー(オンライン対戦の待合室) -->
+<section id="lobby" class="overlay hidden">
+  <h1>GRAB &amp; RUN!</h1>
+
+  <!-- 入り口: 名前を入れて、ルームを作る or 参加 -->
+  <div id="lbEntry" class="lb">
+    <label class="field">あなたの名前
+      <input id="lbName" maxlength="10" autocomplete="off" enterkeyhint="done">
+    </label>
+    <button class="btn" id="lbCreate">ルームを作る</button>
+    <p class="sub">または、ルームコードで参加</p>
+    <div class="join">
+      <input id="lbCode" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="4桁" autocomplete="off">
+      <button class="btn" id="lbJoin">参加</button>
+    </div>
+    <p class="msg" id="lbMsg"></p>
+    <button class="btn ghost" id="lbBack">もどる</button>
+  </div>
+
+  <!-- 待合室 -->
+  <div id="lbRoom" class="lb hidden">
+    <p class="sub">ルームコード(友だちに教えてね)</p>
+    <div class="big code" id="lbRoomCode">0000</div>
+    <div class="card players">
+      <div class="players-head"><span>参加者</span><span id="lbCount"></span></div>
+      <ol id="lbPlayers"></ol>
+      <p class="sub small">番号は店長をやる順番</p>
+    </div>
+    <p class="msg" id="lbRoomMsg"></p>
+    <button class="btn" id="lbStart">スタート</button>
+    <button class="btn" id="lbReset">ロビーにもどす</button>
+    <button class="btn ghost" id="lbLeave">退出</button>
+  </div>
+</section>
+
 <script src="main.js"></script>
+<script type="module" src="lobby.js"></script>
 </body>
 </html>

@@ -60,3 +60,33 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 }
 .btn.boss { background: #c0392b; }
 .big { font-size: 48px; font-weight: 800; color: var(--accent); }
+
+/* ---------- ロビー ---------- */
+/* 画面に入りきらないときは上が切れずにスクロールできるよう、上下に伸び縮みする余白を置いて真ん中に寄せる */
+.overlay { overflow-y: auto; justify-content: flex-start; touch-action: pan-y; }
+.overlay::before, .overlay::after { content: ""; flex: 1 0 0; }
+.btn.online { background: #2e9d5b; }
+.btn.ghost { background: transparent; color: var(--muted); border: 1px solid rgba(255, 255, 255, 0.2); }
+.btn:disabled { opacity: 0.4; }
+.lb { display: flex; flex-direction: column; align-items: stretch; gap: 10px; width: 100%; max-width: 320px; }
+.field { display: flex; flex-direction: column; gap: 4px; text-align: left; font-size: 14px; color: var(--muted); }
+.lb input {
+  font: inherit; font-size: 18px; color: var(--fg);
+  padding: 12px 14px; border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.08);
+  -webkit-user-select: text; user-select: text; min-width: 0;
+}
+.lb input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.join { display: flex; gap: 8px; }
+.join input { flex: 1; text-align: center; letter-spacing: 0.3em; }
+.msg { margin: 0; min-height: 1.5em; color: var(--accent); font-size: 14px; }
+.big.code { letter-spacing: 0.15em; line-height: 1.1; }
+.players { max-width: none; }
+.players-head { display: flex; justify-content: space-between; font-weight: 700; margin-bottom: 4px; }
+.players-head span:last-child { color: var(--muted); font-weight: 400; font-size: 13px; }
+.players ol { margin: 0 0 6px; padding-left: 22px; }
+.players li { padding: 3px 0; font-size: 16px; }
+.players li small { color: var(--accent); font-size: 12px; }
+.players li.off { color: var(--muted); }
+.players li.off small { color: var(--muted); }
+.sub.small { font-size: 12px; }
