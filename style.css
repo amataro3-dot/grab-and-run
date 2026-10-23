@@ -26,6 +26,28 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 .hud-row.small { font-size: 13px; font-weight: 400; color: var(--muted); }
 .hud-row b { color: var(--accent); }
 #hudTime.warn { color: #ff6b5b; }
+#hudE { justify-content: flex-start; gap: 10px; color: var(--fg); }
+
+/* 捕まったお知らせ */
+#banner {
+  position: fixed; left: 50%; top: calc(86px + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
+  max-width: calc(100% - 32px); padding: 8px 16px; border-radius: 12px;
+  background: rgba(192, 57, 43, 0.92); color: #fff; font-weight: 700; font-size: 15px; text-align: center;
+  pointer-events: none; animation: bannerIn 0.25s ease-out;
+}
+@keyframes bannerIn { from { opacity: 0; transform: translate(-50%, -8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* 観戦の切りかえ */
+#watch {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: 30px;
+  background: rgba(14, 12, 20, 0.85); border: 1px solid rgba(255, 255, 255, 0.2);
+}
+#watch button {
+  width: 48px; height: 48px; border-radius: 50%; border: none; font-size: 20px;
+  background: rgba(255, 204, 51, 0.2); color: var(--accent); touch-action: manipulation;
+}
+#watchName { min-width: 9em; text-align: center; font-size: 14px; color: var(--fg); }
 
 #grab {
   position: fixed; right: 20px; bottom: calc(28px + env(safe-area-inset-bottom, 0px));

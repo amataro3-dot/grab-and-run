@@ -105,7 +105,7 @@ with sync_playwright() as p:
     check(get_at(f"rooms/gr-{code}") is None, "消えたルームにゴミが残らない")
 
     # 10. ひとりで練習はそのまま遊べる
-    b.click("[data-role=thief][data-door=front]"); wait(b, 500)
+    b.click("[data-role=thief]"); b.click("[data-enter=front]"); wait(b, 500)
     check(b.is_visible("#hud") and not b.is_visible("#start"), "ひとりで練習が始まる")
 
     # 11. 小さいスマホでの見た目

@@ -220,14 +220,13 @@ function renderPrep() {
   const box = $("prepTraps");
   box.textContent = "";
   for (const [type, d] of Object.entries(TRAPS)) {
-    if (!G.online && d.price) continue; // 練習は無料のトラップだけ
     const b = document.createElement("button");
     b.className = "chip" + (G.selTrap === type ? " sel" : "");
     b.innerHTML = `<span>${d.emoji} ${d.name}</span><small>${d.price ? d.price + "🪙" : "無料"}</small>`;
     b.addEventListener("click", () => pickTrap(type));
     box.append(b);
   }
-  $("prepInfo").textContent = (G.online ? `🪙${G.coins || 0}　` : "") + `${G.traps.length}/${TRAP_MAX}個` +
+  $("prepInfo").textContent = `🪙${G.coins || 0}　${G.traps.length}/${TRAP_MAX}個` +
     (G.online && G.prepLeft !== undefined ? `　残り${G.prepLeft}秒` : "");
   $("prepOk").textContent = G.online ? (G.readyMe ? "泥棒を待っています…" : "準備OK") : "スタート";
   $("prepOk").disabled = !!G.readyMe;
@@ -260,21 +259,22 @@ async function tapPrep(sx, sy) {
     G.traps = G.traps.filter(k => k !== old);
     G.selTrap = null;
     const d = TRAPS[old.type];
-    prepMsg(`${d.name}を外した` + (G.online && d.price ? `(${d.price}🪙もどった)` : ""));
-    if (G.online) { G.hooks.setTraps(G.traps); if (d.price) G.hooks.refund(old.type); }
+    prepMsg(`${d.name}を外した` + (d.price ? `(${d.price}🪙もどった)` : ""));
+    if (d.price) G.hooks.refund(old.type).then(() => renderPrep());
+    if (G.online) G.hooks.setTraps(G.traps);
     return renderPrep();
   }
   const type = G.armed, d = TRAPS[type];
   const why = trapProblem(type, tx, ty);
   if (why) return prepMsg(why);
-  if (G.online && d.price) {
+  if (d.price) {
     // 置いた時に払う
     G.busy = true;
     const ok = await G.hooks.buy(type);
     G.busy = false;
     if (!G || G.phase !== "prep") return;
     if (!ok) return prepMsg("コインが足りない");
-    G.coins = Math.max(0, (G.coins || 0) - d.price); // 画面の数字を先に減らしておく
+    if (G.online) G.coins = Math.max(0, (G.coins || 0) - d.price); // 画面の数字を先に減らしておく(練習はもう減っている)
   }
   G.traps.push({ id: newTrapId(), type, x: tx, y: ty });
   G.armed = null;
@@ -291,7 +291,8 @@ document.getElementById("prepOk").addEventListener("click", () => {
 
 /* ---------- 泥棒のショップ(入り口を選ぶ画面) ---------- */
 function renderShop() {
-  if (!G || !G.online || G.role !== "thief") return;
+  if (!G || G.role !== "thief") return;
+  const m = me();
   $("shopCoins").textContent = `🪙${G.coins || 0}`;
   const box = $("shopItems");
   box.textContent = "";
@@ -300,7 +301,7 @@ function renderShop() {
     const b = document.createElement("button");
     b.className = "chip wide" + (owned ? " sel" : "");
     b.innerHTML = `<span>${d.emoji} ${d.name}</span><small>${owned ? "買った ✓" : d.price + "🪙"}</small><em>${d.info}</em>`;
-    b.disabled = !!owned || (G.coins || 0) < d.price || G.me.out;
+    b.disabled = !!owned || (G.coins || 0) < d.price || m.out;
     b.addEventListener("click", () => {
       b.disabled = true;
       G.hooks.buy(kind).then(() => renderShop());
@@ -308,16 +309,16 @@ function renderShop() {
     box.append(b);
   }
   const prep = G.phase === "prep";
-  $("doorWait").textContent = prep
-    ? (G.me.door ? "準備OK！店長がトラップを置き終わるのを待っています" : `入り口を選ぶと準備OK(残り${G.prepLeft ?? PREP_SEC}秒)`)
+  $("doorWait").textContent = !G.online ? "入り口を選ぶとスタート(CPU店長はもうトラップを置いたよ)"
+    : prep ? (m.door ? "準備OK！店長がトラップを置き終わるのを待っています" : `入り口を選ぶと準備OK(残り${G.prepLeft ?? PREP_SEC}秒)`)
     : "時間はもう進んでいるよ。急いで！";
-  for (const b of document.querySelectorAll("[data-enter]")) b.classList.toggle("sel", G.me.door === b.dataset.enter);
+  for (const b of document.querySelectorAll("[data-enter]")) b.classList.toggle("sel", m.door === b.dataset.enter);
 }
 
 /* ---------- アイテムを使う(遊んでいる間のボタン) ---------- */
 function renderItemBar() {
   const bar = $("itemBar"), m = me();
-  const show = !!(G && G.online && m && m.in && !m.out && G.phase === "play");
+  const show = !!(G && m && m.in && !m.out && G.phase === "play");
   bar.classList.toggle("hidden", !show);
   if (!show) return;
   const kinds = Object.keys(GEAR).filter(k => GEAR[k].use && (G.gear[k] || 0) > 0);
@@ -338,7 +339,7 @@ function useGear(kind) {
   G.gear[kind]--;
   if (kind === "sneakers") { m.boost = SNEAKER_SEC; popup(m, "👟 ダッシュ!"); }
   if (kind === "disguise") { m.disg = DISGUISE_SEC; popup(m, "🥸 変装!"); }
-  if (kind === "smoke") popup(m, "💨 けむり玉!");
+  if (kind === "smoke") popup(m, "💨 けむり玉!" + (G.online ? "" : "(店長が見失う)"));
   G.hooks.used(kind, G.gear[kind]);
   renderItemBar();
 }

@@ -19,6 +19,17 @@
     <span id="hudC"></span>
     <span id="hudD"></span>
   </div>
+  <div class="hud-row small" id="hudE"></div>
+</div>
+
+<!-- 誰かが捕まったときのお知らせ(全員の画面に3秒) -->
+<div id="banner" class="hidden"></div>
+
+<!-- 観戦の切りかえ(泥棒が捕まったあと) -->
+<div id="watch" class="hidden">
+  <button id="watchPrev" aria-label="前の人">◀</button>
+  <span id="watchName"></span>
+  <button id="watchNext" aria-label="次の人">▶</button>
 </div>
 
 <!-- 準備中(店長): トラップを置く -->
@@ -65,10 +76,9 @@
     <b id="pcNum">3人</b>
     <button class="btn ghost" id="pcPlus" aria-label="ふやす">▶</button>
   </div>
-  <p class="sub" id="pcThief">泥棒であそぶ(自分 + CPUの仲間)<br>どこから入る？</p>
+  <p class="sub" id="pcThief">泥棒であそぶ(自分 + CPUの仲間)</p>
   <div class="btns">
-    <button class="btn" data-role="thief" data-door="front">表の入り口</button>
-    <button class="btn" data-role="thief" data-door="back">裏口</button>
+    <button class="btn" data-role="thief">泥棒になる</button>
   </div>
   <p class="sub" id="pcBoss">店長であそぶ(CPUの泥棒2人)</p>
   <div class="btns">

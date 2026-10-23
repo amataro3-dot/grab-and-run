@@ -141,6 +141,8 @@ function apply(game) {
     const gone = !t.cpu && (!players[t.id] || players[t.id].online === false);
     const wasOut = t.out;
     t.out = !!caughtList[t.id] || (t !== G.me && gone);
+    // 捕まったお知らせ(開き直したときに、前に捕まった人の分まで出さないように)
+    if (caughtList[t.id] && S.caughtSeen && !S.caughtSeen.has(t.id)) GR.announceCaught(t, caughtList[t.id] === "police");
     if (t.out && !wasOut && t.cpu) { t.carry = []; t.grab = null; if (t.ai.target) { t.ai.target.claim = null; t.ai.target = null; } }
     if (t === G.me && t.out && !wasOut) {
       t.carry = []; t.grab = null; // 手に持っていた品物は没収
@@ -148,6 +150,7 @@ function apply(game) {
       GR.popup(t, t.byPolice ? "警察に捕まった!" : "捕まった!"); GR.vibrate(300);
     }
   }
+  S.caughtSeen = new Set(Object.keys(caughtList));
   G.boss.caught = Object.values(caughtList).filter(v => v === true).length;
   G.catchesAll = Object.keys(caughtList).length;
   G.host = isHost();
@@ -155,10 +158,11 @@ function apply(game) {
   // 警察(ホストは自分で動かしているので、知らない警察だけ足す)
   for (const [id, d] of Object.entries(game.police || {})) {
     let pc = G.police.find(q => q.id === id);
-    if (!pc) { pc = GR.makePolice(id, d.x, d.y); G.police.push(pc); }
+    if (!pc) { pc = GR.makePolice(id, d.x, d.y); G.police.push(pc); if (S.policeSeen) GR.sirenOn(); }
     if (!G.host) { pc.tx = d.x; pc.ty = d.y; pc.face = d.f || 1; pc.mode = d.c ? "chase" : "patrol"; }
   }
 
+  S.policeSeen = true;
   // トラップ(準備中の店長は自分の手元が正しいので上書きしない)
   if (!(G.phase === "prep" && G.me === G.boss)) {
     const old = new Map(G.traps.map(k => [k.id, k]));
