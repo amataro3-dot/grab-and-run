@@ -36,14 +36,20 @@ with sync_playwright() as p:
     game = get_at(gp)
     check(game and game["boss"] == "uid_A" and len(game["players"]) == 3, "スタートで試合ができ、店長は入った順の1番目(A)")
     check(len(game["items"]) == 13 and game["t"] == 180, "品物13個・3分でスタート")
-    check(G(a, "G.role") == "boss" and a.is_visible("#hud") and not a.is_visible("#door") and not a.is_visible("#grab"), "A は店長の画面(盗むボタンなし)")
+    check(G(a, "G.role") == "boss" and a.is_visible("#prep") and not a.is_visible("#door") and not a.is_visible("#grab"), "A は店長: まずトラップを置く画面")
+    check(game["phase"] == "prep" and b.is_visible("#shopItems"), "最初は準備中。泥棒にはショップ")
     check(b.is_visible("#door") and c.is_visible("#door") and "みつる" in b.inner_text("#doorNote"), "B と C は入り口を選ぶ画面。店長の名前が出る")
     check(not a.is_visible("#lobby") and not b.is_visible("#lobby"), "ロビーは消える")
     c.screenshot(path=f"{SHOTS}/o1_door.png")
 
     # ---------- 入り口を選んで動く ----------
-    b.click("[data-enter=front]"); c.click("[data-enter=back]"); wait(b, 500)
-    check(not b.is_visible("#door") and b.is_visible("#grab"), "入り口を選ぶと店に入る")
+    b.click("[data-enter=front]"); wait(b, 400)
+    check(b.is_visible("#door") and "準備OK" in b.inner_text("#doorWait"), "準備中に入り口を選ぶと準備OK(まだ入らない)")
+    c.click("[data-enter=back]"); wait(c, 300)
+    check(get_at(gp + "/phase") == "prep", "店長が準備OKを押すまで始まらない")
+    a.click("#prepOk"); wait(b, 800)
+    check(get_at(gp + "/phase") == "play", "店長と泥棒みんなが準備OKで始まる")
+    check(not b.is_visible("#door") and b.is_visible("#grab") and a.is_visible("#hud") and not a.is_visible("#prep"), "始まると選んだ入り口から店に入る")
     pb = get_at(gp + "/pos/uid_B")
     check(pb and pb["in"] == 1 and pb["y"] > 24, f"B の位置が送られる(表の入り口 y={pb and pb['y']})")
     check(get_at(gp + "/pos/uid_C")["y"] < 1, "C は裏口から")
@@ -129,7 +135,7 @@ with sync_playwright() as p:
     # ---------- 2試合目: 抜けた人は脱落、全員いなくなったら終わり ----------
     a.click("#lbStart"); wait(a, 700)
     check(b.is_visible("#door") and G(b, "G.me.carry.length") == 0 and G(b, "G.me.out") is False, "2試合目は最初から")
-    b.click("[data-enter=front]"); c.click("[data-enter=front]"); wait(b, 300)
+    b.click("[data-enter=front]"); c.click("[data-enter=front]"); a.click("#prepOk"); wait(b, 800)
     ph.disconnect("C"); wait(a, 600)
     check(G(a, "G.thieves.find(t => t.id === 'uid_C').out") is True, "C が切れたら脱落あつかい")
     check(get_at(gp + "/phase") == "play", "ほかの人がいるので試合は続く")
@@ -162,7 +168,7 @@ with sync_playwright() as p:
     m = get_at(rp + "/match")
     check(m and m["order"] == ["uid_E", "uid_F", "uid_G"] and m["round"] == 0, "試合全体のデータ(店長の順番)ができる")
     check("ラウンド1/3" in f.inner_text("#doorNote"), "入り口画面にラウンド1/3")
-    f.click("[data-enter=front]"); g.click("[data-enter=front]"); wait(f, 300)
+    f.click("[data-enter=front]"); g.click("[data-enter=front]"); e.click("#prepOk"); wait(f, 800)
     warp(f, 5.2, 15.5); wait(f, 300); hold_space([f], 1200); warp(f, 9.5, 25.4); wait(f, 400)
     warp(g, 10.5, 15.5); wait(g, 300); e.evaluate("GR.G.me.x = 10.5; GR.G.me.y = 15.9"); wait(e, 600)
     e.evaluate("GR.G.time = 0.5"); wait(e, 1500)
@@ -178,11 +184,12 @@ with sync_playwright() as p:
     check(get_at(rp + "/game/boss") == "uid_F" and get_at(rp + "/match/round") == 1, "ラウンド2の店長は F")
     check(G(f, "G.role") == "boss" and e.is_visible("#door") and "ラウンド2/3" in e.inner_text("#doorNote"), "F が店長、E と G は入り口を選ぶ")
     check(G(e, "G.me.bank") == 0 and G(e, "G.items.length") == 13, "品物と点数は新しいラウンドで元どおり")
-    e.click("[data-enter=back]"); wait(e, 200)
+    e.click("[data-enter=back]"); g.click("[data-enter=back]"); f.click("#prepOk"); wait(e, 800)
     e.evaluate("GR.G.time = 0.5"); wait(e, 1500)   # ホスト(E)の時計で終わる
     check(get_at(rp + "/match/totals/uid_F") == 10 + 50 * 0 + 520 // 4, "ラウンド2: 店長 F の点が合計に足される")
     e.click("#resNext"); wait(e, 800)
     check(get_at(rp + "/game/boss") == "uid_G", "ラウンド3の店長は G")
+    e.click("[data-enter=back]"); f.click("[data-enter=back]"); g.click("#prepOk"); wait(e, 800)
     e.evaluate("GR.G.time = 0.5"); wait(e, 1500)
     for n, pg in (("E", e), ("F", f), ("G", g)):
         check("最終結果" in pg.inner_text("#resTitle") and "位" in pg.inner_text("#resScore"), f"{n} に最終結果と順位")
@@ -193,6 +200,115 @@ with sync_playwright() as p:
     e.screenshot(path=f"{SHOTS}/o6_final.png")
     e.click("#resLobby"); wait(e, 600)
     check(get_at(rp + "/match") is None and f.is_visible("#lbRoom"), "ロビーにもどると試合全体のデータも消える")
+
+    # ---------- トラップ・ショップ・コイン・アイテム ----------
+    h, i_, j = ph.open("H"), ph.open("I"), ph.open("J")
+    h.click("#goOnline"); h.fill("#lbName", "てんちょう"); h.click("#lbCreate"); wait(h)
+    code3 = h.inner_text("#lbRoomCode"); r3 = f"rooms/gr-{code3}"; g3 = r3 + "/game"
+    for pg, n in ((i_, "どろ1"), (j, "どろ2")):
+        pg.click("#goOnline"); pg.fill("#lbName", n); pg.fill("#lbCode", code3); pg.click("#lbJoin"); wait(pg, 500)
+    h.click("#lbStart"); wait(h, 800)
+    check(get_at(r3 + "/match/coins") == {"uid_H": 100, "uid_I": 100, "uid_J": 100}, "最初は全員100コイン")
+    check("🪙100" in h.inner_text("#prepInfo") and "🪙100" in i_.inner_text("#shopCoins"), "コインが画面に出る")
+
+    def tap_tile(pg, tx, ty):
+        x, y = pg.evaluate(f"[({tx} + 0.5) * T - camX, ({ty} + 0.5) * T - camY]")
+        pg.mouse.click(x, y); pg.wait_for_timeout(150)
+    def chip(pg, name): pg.locator("#prepTraps .chip", has_text=name).click(); pg.wait_for_timeout(300)
+    traps = lambda: get_at(g3 + "/traps") or {}
+
+    chip(h, "ネズミ捕り"); tap_tile(h, 8, 12); wait(h, 300)
+    check([(d["type"], d["x"], d["y"]) for d in traps().values()] == [("rat", 8, 12)], "マップをタップするとトラップが置かれる")
+    tap_tile(h, 7, 12); tap_tile(h, 8, 13); wait(h, 300)
+    check(len(traps()) == 2 and "2個まで" in h.inner_text("#prepHint"), "同じ種類は2個まで")
+    tap_tile(h, 7, 12); wait(h, 300)
+    check(len(traps()) == 1, "もう一度タップで外せる")
+    tap_tile(h, 7, 10); wait(h, 300)
+    check(len(traps()) == 1 and "置けない" in h.inner_text("#prepHint"), "調理台の上には置けない")
+    tap_tile(h, 9, 12); wait(h, 300)
+    check(len(traps()) == 1 and "品物" in h.inner_text("#prepHint"), "品物の上には置けない")
+    chip(h, "防犯ブザー"); wait(h, 500)
+    check(get_at(r3 + "/match/coins/uid_H") == 70 and get_at(g3 + "/gear/uid_H/buzzer") == 1, "防犯ブザーを30コインで買える")
+    tap_tile(h, 6, 12); wait(h, 300)
+    chip(h, "すべる床"); tap_tile(h, 7, 12); wait(h, 300)
+    check(len(traps()) == 3, "トラップは3個まで置ける")
+    tap_tile(h, 7, 13); wait(h, 300)
+    check(len(traps()) == 3 and "3個まで" in h.inner_text("#prepHint"), "4個目は置けない")
+    h.screenshot(path=f"{SHOTS}/o8_prep.png")
+
+    i_.locator("#shopItems .chip", has_text="スニーカー").click(); wait(i_, 500)
+    i_.locator("#shopItems .chip", has_text="暗視ゴーグル").click(); wait(i_, 500)
+    check(get_at(r3 + "/match/coins/uid_I") == 30 and get_at(g3 + "/gear/uid_I") == {"sneakers": 1, "goggles": 1}, "泥棒がアイテムを買える(100→30コイン)")
+    check(i_.locator("#shopItems .chip", has_text="大きいカバン").is_disabled(), "コインが足りない物は買えない")
+    i_.screenshot(path=f"{SHOTS}/o9_shop.png")
+    i_.click("[data-enter=front]"); j.click("[data-enter=back]"); h.click("#prepOk"); wait(h, 900)
+    check(get_at(g3 + "/phase") == "play", "準備OKで始まる")
+    check(i_.is_visible("#itemBar") and "👟" in i_.inner_text("#itemBar"), "スニーカーのボタンが出る")
+    i_.locator("#itemBar .item-btn").first.dispatch_event("pointerdown"); wait(i_, 400)
+    check(G(i_, "G.me.boost") > 0 and get_at(g3 + "/gear/uid_I/sneakers") == 0, "スニーカーを使うと速くなる(1回だけ)")
+    check(G(i_, "G.me.goggles") is True, "ゴーグルを買った泥棒はトラップが見える")
+
+    # トラップを踏む
+    warp(i_, 8.5, 12.5); wait(i_, 500)
+    check(G(i_, "G.me.stun") > 0, "ネズミ捕りを踏むと動けない")
+    check(not any(d["type"] == "rat" for d in traps().values()), "踏んだトラップはなくなる")
+    wait(h, 300)
+    check(not G(h, "G.traps.some(k => k.type === 'rat')"), "店長の画面からも消える")
+    warp(j, 6.5, 12.5); wait(j, 600)
+    check(len(get_at(g3 + "/alerts") or {}) == 1 and G(h, "G.alerts.length") == 1, "防犯ブザーを踏むと店長の画面に場所が出る")
+    h.screenshot(path=f"{SHOTS}/o10_buzzer.png")
+
+    # コイン: 出口で半分、捕まると半分取られる
+    warp(i_, 5.2, 15.5); wait(i_, 2200); hold_space([i_], 1200); warp(i_, 9.5, 25.4); wait(i_, 600)
+    check(get_at(r3 + "/match/coins/uid_I") == 35, f"持ち出した点数の半分がコインに(30→{get_at(r3 + '/match/coins/uid_I')})")
+    warp(j, 12.5, 15.5); wait(j, 300); h.evaluate("GR.G.me.x = 12.5; GR.G.me.y = 15.9"); wait(h, 800)
+    check(get_at(r3 + "/match/coins/uid_J") == 50 and get_at(r3 + "/match/coins/uid_H") == 70 + 50 + 30,
+          f"店長に捕まるとコインの半分が店長へ(+ほうび30) J={get_at(r3 + '/match/coins/uid_J')} H={get_at(r3 + '/match/coins/uid_H')}")
+
+    # けむり玉・変装
+    set_at(g3 + "/gear/uid_I/smoke", 1); set_at(g3 + "/gear/uid_I/disguise", 1); wait(i_, 400)
+    i_.locator("#itemBar .item-btn", has_text="💨").dispatch_event("pointerdown"); wait(h, 500)
+    check(G(h, "G.smoke") > 0, "けむり玉で店長の画面がくもる")
+    h.screenshot(path=f"{SHOTS}/o11_smoke.png")
+    i_.locator("#itemBar .item-btn", has_text="🥸").dispatch_event("pointerdown"); wait(h, 400)
+    check(get_at(g3 + "/pos/uid_I/dg") == 1 and G(h, "G.thieves.find(t => t.id === 'uid_I').dg") is True, "変装が店長に伝わる")
+
+    # ---------- いろいろなトラップ(練習で確かめる) ----------
+    k = ph.open("K")
+    k.click("[data-role=thief][data-door=front]"); wait(k, 300)
+    check(G(k, "G.traps.length") == 2, "練習: CPU店長がトラップを2個置く")
+    k.evaluate("GR.G.traps = []; GR.G.thieves[1].x = 1.5; GR.G.thieves[1].y = 8.5; GR.G.thieves[1].ai.wait = 99")
+    k.evaluate("GR.G.boss.cpu = false; GR.G.boss.x = 18.5; GR.G.boss.y = 1.5")  # CPU店長は遠くでお休み
+    # 自動ロック扉: 踏んで離れたら閉まる → 通れない
+    k.evaluate("GR.G.traps.push({id:'d1', type:'door', x:13, y:6}); GR.G.thieves[0].x = 13.5; GR.G.thieves[0].y = 6.5"); wait(k, 300)
+    check(G(k, "G.closed.length") == 1 and G(k, "G.closed[0].on") is False, "扉は泥棒が立っている間は閉まらない")
+    k.evaluate("GR.G.thieves[0].y = 7.6"); wait(k, 300)
+    check(G(k, "G.closed[0].on") is True and k.evaluate("isSolid(13, 6)"), "離れると閉まって通れない")
+    k.evaluate("GR.G.time -= 11"); wait(k, 300)
+    check(not k.evaluate("isSolid(13, 6)"), "10秒たつと開く")
+    # 小麦粉 → 足跡
+    k.evaluate("GR.G.traps.push({id:'f1', type:'flour', x:15, y:15}); GR.G.thieves[0].x = 15.5; GR.G.thieves[0].y = 15.5"); wait(k, 600)
+    check(G(k, "G.thieves[0].flour") > 0 and G(k, "G.feet.length") > 0, "小麦粉を踏むと足跡が残る")
+    # すべる床
+    k.evaluate("GR.G.thieves[0].x = 4.5; GR.G.thieves[0].y = 15.5; GR.G.traps.push({id:'s1', type:'slip', x:6, y:15})")
+    k.keyboard.down("ArrowRight"); wait(k, 500); k.keyboard.up("ArrowRight"); wait(k, 200)
+    check(G(k, "!!GR.G.thieves[0].slip"), "すべる床を踏むとすべる")
+    x1 = G(k, "G.thieves[0].x"); wait(k, 300)
+    check(G(k, "G.thieves[0].x") > x1 + 0.3, "手をはなしても勝手に進む")
+    # ロッカーの鍵 → 隠れられない
+    k.evaluate("GR.G.thieves[0].slip = null; GR.G.traps.push({id:'l1', type:'lock', x:2, y:2}); GR.G.thieves[0].x = 2.5; GR.G.thieves[0].y = 2.5"); wait(k, 300)
+    check(G(k, "G.thieves[0].hidden") is False, "ロッカーの鍵がかかった📦には隠れられない")
+    k.evaluate("GR.G.thieves[0].x = 15.5; GR.G.thieves[0].y = 5.5"); wait(k, 300)
+    check(G(k, "G.thieves[0].hidden") is True, "ほかの📦には隠れられる")
+
+    # 練習で店長: トラップを置いてからスタート
+    k.evaluate("GR.G.time = 0.1"); wait(k, 300); k.click("#again"); wait(k, 300)
+    k.click("[data-role=boss]"); wait(k, 400)
+    check(k.is_visible("#prep") and "スタート" in k.inner_text("#prepOk") and "防犯ブザー" not in k.inner_text("#prepTraps"), "練習の店長: 無料のトラップを置いてスタート")
+    tap_tile(k, 8, 12); wait(k, 200)
+    check(G(k, "G.traps.length") == 1 and G(k, "G.phase") == "prep", "練習でもタップで置ける(時間は止まっている)")
+    k.click("#prepOk"); wait(k, 300)
+    check(G(k, "G.phase") == "play" and k.is_visible("#hud") and not k.is_visible("#prep"), "スタートで始まる")
 
     # ---------- ひとりで練習は今まで通り ----------
     d = ph.open("D")

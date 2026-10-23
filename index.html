@@ -21,6 +21,17 @@
   </div>
 </div>
 
+<!-- 準備中(店長): トラップを置く -->
+<div id="prep" class="hidden">
+  <div class="prep-head"><b>トラップを置こう</b><span id="prepInfo"></span></div>
+  <div id="prepTraps" class="chips"></div>
+  <p class="prep-hint" id="prepHint"></p>
+  <button class="btn" id="prepOk">準備OK</button>
+</div>
+
+<!-- アイテムボタン(泥棒・オンライン) -->
+<div id="itemBar" class="hidden"></div>
+
 <!-- 盗むボタン(長押し) -->
 <button id="grab" class="hidden" disabled>
   <span id="grabRing"></span>
@@ -69,11 +80,16 @@
 <section id="door" class="overlay hidden">
   <h1>どこから入る？</h1>
   <p class="sub" id="doorNote">あなたは泥棒</p>
+  <div class="card shop">
+    <div class="shop-head"><b>ショップ</b><span id="shopCoins"></span></div>
+    <div id="shopItems" class="chips"></div>
+    <p class="sub small">買った物はこのラウンドだけ。👟💨🥸 は遊んでいる間にボタンで使う</p>
+  </div>
   <div class="btns">
     <button class="btn" data-enter="front">表の入り口</button>
     <button class="btn" data-enter="back">裏口</button>
   </div>
-  <p class="sub small">時間はもう進んでいるよ。急いで！</p>
+  <p class="sub small" id="doorWait">時間はもう進んでいるよ。急いで！</p>
 </section>
 
 <!-- ロビー(オンライン対戦の待合室) -->
@@ -111,6 +127,7 @@
   </div>
 </section>
 
+<script src="traps.js"></script>
 <script src="main.js"></script>
 <script type="module" src="lobby.js"></script>
 </body>

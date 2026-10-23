@@ -101,7 +101,7 @@ const THIEF_COLORS = ["#ffcc33", "#5dade2", "#58d68d", "#f1948a", "#bb8fce", "#f
 /* ---------- 便利関数 ---------- */
 const $ = id => document.getElementById(id);
 const tileAt = (tx, ty) => (tx < 0 || ty < 0 || tx >= MW || ty >= MH) ? "#" : MAP[ty][tx];
-const isSolid = (tx, ty) => SOLID.includes(tileAt(tx, ty));
+const isSolid = (tx, ty) => SOLID.includes(tileAt(tx, ty)) || isClosedTile(tx, ty); // 閉まった自動ロック扉も通れない
 const isDoor = (tx, ty) => "FB".includes(tileAt(tx, ty));
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const tileOf = e => [Math.floor(e.x), Math.floor(e.y)];
@@ -188,11 +188,33 @@ function newGame(role, door) {
   G = {
     phase: "play", role, time: ROUND_SEC, items, thieves,
     boss: { x: 8.5, y: 10.5, face: 1, cpu: role !== "boss", path: [], mode: "patrol", lastSeen: null, repath: 0, caught: 0 },
-    popups: [], police: [],
+    popups: [], police: [], ...emptyMarks(),
   };
   $("start").classList.add("hidden"); $("result").classList.add("hidden");
+  if (role === "thief") { randomTraps(PRACTICE_TRAPS); beginPlay(); }
+  else {
+    // 店長: 先にトラップを置く
+    G.phase = "prep"; G.selTrap = "rat";
+    $("prep").classList.remove("hidden"); prepMsg("種類を選んで、マップをタップ(もう一度タップで外す)。なぞると移動");
+    renderPrep();
+  }
+}
+// トラップなどの入れ物(空っぽ)
+const emptyMarks = () => ({ traps: [], closed: [], alerts: [], feet: [], smoke: 0, gear: {}, coins: 0 });
+
+// 準備が終わって遊び始める(練習・オンライン共通)
+function beginPlay() {
+  G.phase = "play"; joy = null; lastHud = "";
+  $("prep").classList.add("hidden");
   $("hud").classList.remove("hidden");
-  $("grab").classList.toggle("hidden", role !== "thief");
+  $("grab").classList.toggle("hidden", G.role !== "thief");
+  if (G.online && G.role === "thief" && G.me.door && !G.me.in) enterAt(G.me, G.me.door);
+  if (G.online) renderShop();
+}
+function enterAt(m, door) {
+  const d = DOORS[door][Math.floor(Math.random() * 2)];
+  m.x = d.x; m.y = d.y; m.in = true;
+  $("door").classList.add("hidden");
 }
 
 const carryW = t => t.carry.reduce((s, k) => s + ITEMS[k].w, 0);
@@ -201,7 +223,7 @@ const hasKey = t => t.carry.includes("key");
 const loot = t => t.carry.filter(k => k !== "key"); // 出口で点数になる物(鍵以外)
 // 盗むのにかかる時間。金庫は重いので長め、鍵で開けるのはさらに長め
 const grabTime = (t, it) => it.type === "safe" ? (hasKey(t) ? GRAB_TIME.open : GRAB_TIME.safe) : GRAB_SEC;
-const speedRate = t => Math.max(MIN_SPEED_RATE, 1 - SLOW_PER_WEIGHT * carryW(t));
+const speedRate = t => Math.max(MIN_SPEED_RATE, 1 - SLOW_PER_WEIGHT * carryW(t) * (t.bag ? BAG_RATE : 1)); // 大きいカバンで遅くなりにくい
 const alive = () => G.thieves.filter(t => !t.out && t.in); // in = 店に入った(オンラインは入り口を選ぶまで外)
 function nearestItem(t) {
   let best = null, bd = GRAB_RANGE;
@@ -221,11 +243,20 @@ const keys = new Set();
 const cv = $("cv");
 cv.addEventListener("pointerdown", e => {
   if (joy) return;
-  joy = { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY };
+  joy = { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY, t0: performance.now(), far: false };
 });
-cv.addEventListener("pointermove", e => { if (joy && e.pointerId === joy.id) { joy.x = e.clientX; joy.y = e.clientY; } });
+cv.addEventListener("pointermove", e => {
+  if (!joy || e.pointerId !== joy.id) return;
+  joy.x = e.clientX; joy.y = e.clientY;
+  if (Math.hypot(joy.x - joy.ox, joy.y - joy.oy) > 12) joy.far = true;
+});
 for (const ev of ["pointerup", "pointercancel", "pointerleave"])
-  cv.addEventListener(ev, e => { if (joy && e.pointerId === joy.id) joy = null; });
+  cv.addEventListener(ev, e => {
+    if (!joy || e.pointerId !== joy.id) return;
+    // さっと触って離した = タップ(準備中の店長はトラップを置く)
+    if (ev === "pointerup" && !joy.far && performance.now() - joy.t0 < 350) tapPrep(e.clientX, e.clientY);
+    joy = null;
+  });
 addEventListener("keydown", e => keys.add(e.key.toLowerCase()));
 addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
 
@@ -468,6 +499,11 @@ function runPolice(dt, nPlayers, catches, catchDist, onCatch) {
 
 /* ---------- 毎フレームの処理 ---------- */
 function update(dt) {
+  if (G && G.phase === "prep") {
+    // 準備中: 店長だけ動ける(トラップを置く場所を見に行く)
+    const [dx, dy] = inputDir(); moveBy(G.boss, dx * BOSS_HUMAN * dt, dy * BOSS_HUMAN * dt);
+    return;
+  }
   if (!G || G.phase !== "play") return;
   G.time -= dt;
   if (G.time <= 0) return finish("time");
@@ -484,8 +520,7 @@ function update(dt) {
         if (t.cpu) { t.ai.mode = "think"; t.ai.target = null; }
       }
     }
-    if (t.cpu) cpuThief(t, dt);
-    else if (!t.grab) moveMe(t, dt);
+    stepThief(t, dt, () => { if (t.cpu) cpuThief(t, dt); else if (!t.grab) moveMe(t, dt); });
 
     if (checkSpot(t) && t.cpu) { t.ai.greed = rand(3, 7); t.ai.mode = "think"; t.ai.wait = rand(0.3, 1); }
   }
@@ -508,6 +543,8 @@ function update(dt) {
       b.mode = "patrol"; b.lastSeen = null; b.path = [];
     }
   }
+
+  updateDoors(); updateMarks(dt);
 
   // 警察(3人なので1人まで)
   runPolice(dt, G.thieves.length + 1, G.thieves.filter(t => t.out).length, CATCH_DIST, t => {
@@ -541,18 +578,27 @@ function takeItem(t, it) {
 }
 // スティックで自分の泥棒を動かす
 function moveMe(t, dt) {
-  const [dx, dy] = inputDir(), sp = THIEF_SPEED * speedRate(t) * dt;
+  const [dx, dy] = inputDir(), sp = THIEF_SPEED * speedRate(t) * boostRate(t) * dt;
   moveBy(t, dx * sp, dy * sp);
 }
-// 隠れ場所にいるか・出口に着いたか。出口で点数にしたら true
+// 泥棒を1フレーム動かす(トラップの効果つき)。自分で動かしている泥棒だけ
+function stepThief(t, dt, normalMove) {
+  const ox = t.x, oy = t.y;
+  thiefEffects(t, dt);
+  if (t.stun > 0) t.grab = null;
+  else if (t.slip) { t.grab = null; slideMove(t, dt); }
+  else normalMove();
+  t.vx = (t.x - ox) / dt; t.vy = (t.y - oy) / dt;
+}
+// 隠れ場所にいるか・出口に着いたか。出口で点数にしたら、その点数を返す
 function checkSpot(t) {
   const [tx, ty] = tileOf(t);
-  t.hidden = tileAt(tx, ty) === "H" && !t.grab;
-  if (!(isDoor(tx, ty) && loot(t).length)) return false;
+  t.hidden = tileAt(tx, ty) === "H" && !t.grab && !lockedHide(tx, ty);
+  if (!(isDoor(tx, ty) && loot(t).length)) return 0;
   const p = carryP(t);
   t.bank += p; t.carry = hasKey(t) ? ["key"] : [];
   popup(t, "+" + p + "点!");
-  return true;
+  return p;
 }
 
 /* ---------- オンライン対戦の毎フレームの処理 ----------
@@ -567,8 +613,14 @@ function follow(e, dt) {
 }
 
 function updateOnline(dt) {
-  G.time = Math.max(0, G.time - dt);
   const m = G.me, b = G.boss;
+  if (G.phase === "prep") {
+    // 準備中: 店長だけ動ける。時間は止まっている
+    if (m === b) { const [dx, dy] = inputDir(); moveBy(b, dx * BOSS_HUMAN * dt, dy * BOSS_HUMAN * dt); }
+    else follow(b, dt);
+    return;
+  }
+  G.time = Math.max(0, G.time - dt);
   for (const t of G.thieves) if (t !== m) follow(t, dt);
   if (b !== m) follow(b, dt);
 
@@ -603,9 +655,11 @@ function updateOnline(dt) {
         });
       }
     }
-    if (!m.grab) moveMe(m, dt);
-    checkSpot(m);
+    stepThief(m, dt, () => { if (!m.grab) moveMe(m, dt); });
+    const p = checkSpot(m);
+    if (p) G.hooks.banked(p);
   }
+  updateDoors(); updateMarks(dt);
 
   // 警察はホストが動かす。ほかの人は届いた位置へなめらかに
   if (G.host) runPolice(dt, G.nPlayers, G.catchesAll, ONLINE_CATCH_DIST, t => {
@@ -635,13 +689,17 @@ function startOnline(opts) {
   G = {
     phase: "play", online: true, role, time: opts.time, items, thieves, boss, popups: [], hooks: opts.hooks,
     me: role === "boss" ? boss : thieves.find(t => t.id === opts.myId),
-    police: [], nPlayers: opts.players.length, catchesAll: 0, host: false,
+    police: [], nPlayers: opts.players.length, catchesAll: 0, host: false, ...emptyMarks(),
   };
+  G.phase = opts.phase || "play";
   lastHud = ""; joy = null;
   for (const id of ["start", "result", "lobby"]) $(id).classList.add("hidden");
-  $("hud").classList.remove("hidden");
-  $("grab").classList.toggle("hidden", role !== "thief");
+  const prep = G.phase === "prep";
+  $("hud").classList.toggle("hidden", prep);
+  $("grab").classList.toggle("hidden", role !== "thief" || prep);
   $("door").classList.toggle("hidden", role !== "thief" || G.me.in);
+  $("prep").classList.toggle("hidden", !(prep && role === "boss"));
+  if (prep && role === "boss") prepMsg("種類を選んで、マップをタップ(もう一度タップで外す)。なぞると移動");
   $("doorNote").textContent = `${opts.label || ""}　あなたは泥棒。店長は ${boss.name} さん`;
   if (role === "boss") popup(boss, (opts.label ? opts.label + " " : "") + "あなたが店長!");
   return G;
@@ -650,23 +708,27 @@ function startOnline(opts) {
 document.querySelectorAll("[data-enter]").forEach(btn => btn.addEventListener("pointerdown", e => {
   e.preventDefault();
   const m = G && G.online && G.me;
-  if (!m || m === G.boss || m.in) return;
-  const d = DOORS[btn.dataset.enter][Math.floor(Math.random() * 2)];
-  m.x = d.x; m.y = d.y; m.in = true;
-  $("door").classList.add("hidden");
+  if (!m || m === G.boss || m.in || m.out) return;
+  if (G.phase === "prep") {
+    // 準備中は入り口を決めるだけ(= 準備OK)。始まったらそこから入る
+    const first = !m.door;
+    m.door = btn.dataset.enter;
+    if (first) G.hooks.ready();
+    renderShop();
+  } else enterAt(m, btn.dataset.enter);
 }));
 // オンライン対戦をやめて画面を片づける
 function stopOnline() {
   if (!G || !G.online) return;
   G = null; joy = null;
-  for (const id of ["hud", "grab", "result", "door"]) $(id).classList.add("hidden");
+  for (const id of ["hud", "grab", "result", "door", "prep", "itemBar"]) $(id).classList.add("hidden");
 }
 
 // 結果画面を出す(html は名前などを入れる前に escapeHtml しておく)
 const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 function showResult(title, score, noteHtml, online) {
   G.phase = "end"; joy = null;
-  for (const id of ["hud", "grab", "door"]) $(id).classList.add("hidden");
+  for (const id of ["hud", "grab", "door", "prep", "itemBar"]) $(id).classList.add("hidden");
   $("result").classList.remove("hidden");
   $("resTitle").textContent = title;
   $("resScore").textContent = score;
@@ -676,7 +738,8 @@ function showResult(title, score, noteHtml, online) {
 }
 
 window.GR = {
-  makePolice, startOnline, stopOnline, showResult, escapeHtml, popup, vibrate,
+  makePolice, startOnline, beginPlay, renderShop, renderPrep, closeDoor, addAlert,
+  TRAPS, GEAR, START_COINS, BOSS_COIN_PER_CATCH, PREP_SEC, DOOR_SEC, SMOKE_SEC, stopOnline, showResult, escapeHtml, popup, vibrate,
   ITEMS, ITEM_SPOTS, TOTAL_PTS, ROUND_SEC, BOSS_PER_CATCH, BOSS_KEEP_RATE, get G() { return G; } };
 
 function finish(why) {
@@ -697,6 +760,7 @@ function finish(why) {
 /* ---------- 描画 ---------- */
 const ctx = cv.getContext("2d");
 let T = 40, cw = 0, ch = 0, dpr = 1;
+let camX = 0, camY = 0; // 画面の左上がマップのどこか(タップした場所を調べるのに使う)
 function resize() {
   dpr = Math.min(2, window.devicePixelRatio || 1);
   cw = innerWidth; ch = innerHeight;
@@ -736,6 +800,7 @@ function draw() {
   let cx = v.x * T - cw / 2, cy = v.y * T - ch / 2;
   cx = Math.max(-T, Math.min(MW * T - cw + T, cx));
   cy = Math.max(-T * 2, Math.min(MH * T - ch + T * 2, cy));
+  camX = cx; camY = cy;
   ctx.save(); ctx.translate(-cx, -cy);
 
   const x0 = Math.max(0, Math.floor(cx / T)), x1 = Math.min(MW - 1, Math.ceil((cx + cw) / T));
@@ -760,13 +825,18 @@ function draw() {
   ctx.font = `${T * 0.62}px sans-serif`;
   for (const it of G.items) ctx.fillText(ITEMS[it.type].emoji, it.x * T, it.y * T + 2);
 
+  // トラップ・閉まった扉・足跡・ブザー
+  drawTraps(isBoss, v);
+
   // 泥棒たち
   for (const t of G.thieves) {
     if (t.out || !t.in) continue;
     let alpha;
     if (isBoss) {
-      // 店長からは、見える範囲で隠れていない泥棒だけ
-      if (t.hidden || dist(v, t) > sight + 0.5 || !canSee(v, t)) continue;
+      // 店長からは、見える範囲(か監視カメラ)の、隠れていない泥棒だけ
+      if (t.hidden || !((dist(v, t) <= sight + 0.5 && canSee(v, t)) || onCamera(t))) continue;
+      // 変装中は警察に見える
+      if (t.disg > 0 || t.dg) { drawBody(t, "#2e5cb8", "👮", 1); continue; }
       alpha = 1;
     } else alpha = t.hidden ? 0.45 : 1; // 泥棒どうしは、いつでも居場所が分かる
     drawBody(t, THIEF_COLORS[t.i], null, alpha);
@@ -812,6 +882,7 @@ function draw() {
   const g = ctx.createRadialGradient(sx, sy, vr * 0.55, sx, sy, vr);
   g.addColorStop(0, "rgba(5,4,8,0)"); g.addColorStop(1, "rgba(5,4,8,0.8)");
   ctx.fillStyle = g; ctx.fillRect(0, 0, cw, ch);
+  if (isBoss) drawBossOverlay(cx, cy);
 
   // スティック
   if (joy) {
@@ -864,7 +935,7 @@ function updateHud() {
 let last = performance.now();
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  if (G && G.online) { if (G.phase === "play") updateOnline(dt); }
+  if (G && G.online) { if (G.phase !== "end") updateOnline(dt); renderItemBar(); }
   else update(dt);
   draw();
   updateHud();
