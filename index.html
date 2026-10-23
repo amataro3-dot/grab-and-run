@@ -13,11 +13,11 @@
 <div id="hud" class="hidden">
   <div class="hud-row">
     <span id="hudTime">3:00</span>
-    <span>持ち出し <b id="hudBank">0</b>点</span>
+    <span><span id="hudA"></span> <b id="hudB"></b></span>
   </div>
   <div class="hud-row small">
-    <span>手持ち <span id="hudCarry">なし</span></span>
-    <span>足の速さ <b id="hudSpeed">100</b>%</span>
+    <span id="hudC"></span>
+    <span id="hudD"></span>
   </div>
 </div>
 
@@ -30,21 +30,23 @@
 <!-- スタート画面 -->
 <section id="start" class="overlay">
   <h1>GRAB &amp; RUN!</h1>
-  <p class="sub">試作版：ひとりで練習(CPUの店長つき)</p>
+  <p class="sub">試作版：CPUとひとりで練習</p>
   <div class="card">
     <ul>
-      <li>左下あたりを指でなぞると移動(スティック)</li>
-      <li>品物の近くで「盗む」を長押し</li>
-      <li>出口(緑のマス)に戻ると点数になる</li>
-      <li>持つほど足が遅くなる</li>
-      <li>📦 の上にいると店長から見えない</li>
-      <li>店長に捕まったら、手持ちは没収で終了</li>
+      <li>画面を指でなぞると移動(スティック)</li>
+      <li>泥棒：品物の近くで「盗む」を長押し。出口(緑)に戻ると点数</li>
+      <li>泥棒：持つほど足が遅くなる。📦 の上にいると店長から見えない</li>
+      <li>店長：泥棒にさわると捕まえられる</li>
     </ul>
   </div>
-  <p class="sub">どこから入る？</p>
+  <p class="sub">泥棒であそぶ(自分 + CPUの仲間)<br>どこから入る？</p>
   <div class="btns">
-    <button class="btn" data-door="front">表の入り口</button>
-    <button class="btn" data-door="back">裏口</button>
+    <button class="btn" data-role="thief" data-door="front">表の入り口</button>
+    <button class="btn" data-role="thief" data-door="back">裏口</button>
+  </div>
+  <p class="sub">店長であそぶ(CPUの泥棒2人)</p>
+  <div class="btns">
+    <button class="btn boss" data-role="boss">店長になる</button>
   </div>
 </section>
 

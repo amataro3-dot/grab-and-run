@@ -58,4 +58,5 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   padding: 14px 22px; border-radius: 12px; border: 0;
   background: #3d6bff; color: #fff;
 }
+.btn.boss { background: #c0392b; }
 .big { font-size: 48px; font-weight: 800; color: var(--accent); }
