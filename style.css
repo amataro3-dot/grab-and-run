@@ -113,8 +113,14 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 .prep-head span, .shop-head span { color: var(--fg); font-size: 14px; }
 .prep-hint { margin: 0; min-height: 1.4em; font-size: 13px; color: var(--muted); }
 #prep .btn { padding: 10px; font-size: 16px; }
+#prepPick { display: flex; align-items: center; gap: 10px; }
+.prep-pick { flex: 1; display: flex; flex-direction: column; }
+.prep-pick b { font-size: 18px; color: var(--fg); }
+.prep-pick span { font-size: 13px; color: var(--accent); }
+#prepPick .btn { flex: 0 0 auto; padding: 8px 16px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip {
+  touch-action: manipulation; /* 2回タップで画面が拡大しないように */
   font: inherit; color: var(--fg); background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 10px;
   padding: 5px 8px; display: flex; flex-direction: column; align-items: flex-start; text-align: left;

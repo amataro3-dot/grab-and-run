@@ -82,7 +82,7 @@ function start(game, uid, code) {
   const G = GR.startOnline({
     myId: uid, bossId: game.boss, players, itemIds: itemIds(game),
     time: game.t ?? GR.ROUND_SEC, phase: game.phase === "prep" ? "prep" : "play",
-    hooks: { grab, caught, trap, buy, used, ready, setTraps, banked },
+    hooks: { grab, caught, trap, buy, refund, used, ready, setTraps, banked },
     label: room.match ? `ラウンド${(game.no || 0) + 1}/${room.match.order.length}` : "",
   });
   // トラップ(準備中の店長は、ここから自分で増やしたり減らしたりする)
@@ -263,6 +263,16 @@ async function buy(kind) {
     await runTransaction(ref(db, "rooms/gr-" + s.code + "/game/gear/" + s.uid + "/" + kind), v => (v || 0) + 1);
     return true;
   } catch (e) { return false; }
+}
+/* 置いたトラップを外した → 買った数を1つ減らして、コインをもどす */
+async function refund(kind) {
+  const s = S, d = GR.TRAPS[kind];
+  if (!s || !d) return false;
+  try {
+    const res = await runTransaction(ref(db, "rooms/gr-" + s.code + "/game/gear/" + s.uid + "/" + kind), v => (v > 0 ? v - 1 : undefined));
+    if (!res.committed) return false;
+  } catch (e) { return false; }
+  return addCoins(s, s.uid, v => v + d.price);
 }
 /* アイテムを使った(残りの数を書く。けむり玉は店長に知らせる) */
 function used(kind, left) {

@@ -49,8 +49,6 @@ const PRACTICE_TRAPS = 2;      // 練習でCPU店長が置くトラップの数
 /* ---------- 置けるか ---------- */
 const trapOn = (tx, ty) => G.traps.find(k => k.x === tx && k.y === ty);
 const placedCount = type => G.traps.filter(k => k.type === type).length;
-// 買ってある数 − 置いた数(無料のトラップはいくつでも)
-const trapStock = type => TRAPS[type].price ? ((G.gear && G.gear[type]) || 0) - placedCount(type) : Infinity;
 function trapProblem(type, tx, ty) {
   const c = tileAt(tx, ty);
   if (type === "lock" ? c !== "H" : c !== ".") return type === "lock" ? "📦の上に置いてね" : "そこには置けない";
@@ -58,7 +56,7 @@ function trapProblem(type, tx, ty) {
   if (G.items.some(it => Math.floor(it.x) === tx && Math.floor(it.y) === ty)) return "品物の上には置けない";
   if (G.traps.length >= TRAP_MAX) return `トラップは${TRAP_MAX}個まで`;
   if (placedCount(type) >= TRAP_SAME_MAX) return `同じ種類は${TRAP_SAME_MAX}個まで`;
-  if (trapStock(type) <= 0) return "ショップで買ってね";
+  if ((G.coins || 0) < TRAPS[type].price) return "コインが足りない"; // お金は置いた時に払う
   return "";
 }
 let trapSeq = 0;
@@ -204,30 +202,29 @@ function drawBossOverlay(cx, cy) {
   }
 }
 
-/* ---------- 準備(店長がトラップを置く) ---------- */
+/* ---------- 準備(店長がトラップを置く) ----------
+   一覧のトラップを1回タップ = 説明、もう1回タップ = 決定(G.armed)。
+   決定すると一覧が消えて「置く場所をタップ」とキャンセルだけになる。1個置いたら一覧にもどる。
+   お金(🪙)は置いた時に払い、一覧から置いたトラップをタップして外すともどってくる。
+   準備中はマップを指でなぞって動かす(店長は動かない)。 */
 function renderPrep() {
   if (!G || G.phase !== "prep" || G.role !== "boss") return;
+  const armed = G.armed && TRAPS[G.armed];
+  $("prepTraps").classList.toggle("hidden", !!armed);
+  $("prepOk").classList.toggle("hidden", !!armed);
+  $("prepPick").classList.toggle("hidden", !armed);
+  if (armed) {
+    $("prepPickName").textContent = `${armed.emoji} ${armed.name}`;
+    $("prepPickHow").textContent = G.armed === "lock" ? "📦をタップして置く" : "置く場所をタップ";
+  }
   const box = $("prepTraps");
   box.textContent = "";
   for (const [type, d] of Object.entries(TRAPS)) {
     if (!G.online && d.price) continue; // 練習は無料のトラップだけ
-    const stock = trapStock(type), owned = (G.gear && G.gear[type]) || 0;
     const b = document.createElement("button");
     b.className = "chip" + (G.selTrap === type ? " sel" : "");
-    const price = !d.price ? "無料" : stock > 0 ? `あと${stock}個` : `${d.price}🪙`;
-    b.innerHTML = `<span>${d.emoji} ${d.name}</span><small>${price}</small>`;
-    b.title = d.info;
-    b.addEventListener("click", () => {
-      if (d.price && stock <= 0) {
-        // ショップで買う
-        if ((G.coins || 0) < d.price) return prepMsg("コインが足りない");
-        if (owned >= TRAP_SAME_MAX) return prepMsg(`同じ種類は${TRAP_SAME_MAX}個まで`);
-        b.disabled = true;
-        G.hooks.buy(type).then(ok => { prepMsg(ok ? `${d.name}を買った!` : "買えなかった"); G.selTrap = type; renderPrep(); });
-        return;
-      }
-      G.selTrap = type; prepMsg(d.info); renderPrep();
-    });
+    b.innerHTML = `<span>${d.emoji} ${d.name}</span><small>${d.price ? d.price + "🪙" : "無料"}</small>`;
+    b.addEventListener("click", () => pickTrap(type));
     box.append(b);
   }
   $("prepInfo").textContent = (G.online ? `🪙${G.coins || 0}　` : "") + `${G.traps.length}/${TRAP_MAX}個` +
@@ -236,24 +233,56 @@ function renderPrep() {
   $("prepOk").disabled = !!G.readyMe;
 }
 const prepMsg = text => { $("prepHint").textContent = text; };
+const PREP_HELP = "トラップを2回タップで決定。置いたトラップをタップで外す。なぞるとマップが動く";
+// 一覧のトラップをタップした
+function pickTrap(type) {
+  if (!G || G.readyMe) return;
+  const d = TRAPS[type];
+  if (G.selTrap !== type) { G.selTrap = type; prepMsg(`${d.info}(もう1回タップで決定)`); return renderPrep(); }
+  // 2回目 = 決定。置けないのが分かっているときは先に言う(選んだのも取り消す)
+  const no = G.traps.length >= TRAP_MAX ? `トラップは${TRAP_MAX}個まで`
+    : placedCount(type) >= TRAP_SAME_MAX ? `同じ種類は${TRAP_SAME_MAX}個まで`
+    : (G.coins || 0) < d.price ? "コインが足りない" : "";
+  if (no) { G.selTrap = null; prepMsg(no); return renderPrep(); }
+  G.armed = type; G.selTrap = null;
+  prepMsg("");
+  renderPrep();
+}
+function cancelPick() { if (G) { G.armed = null; prepMsg(PREP_HELP); renderPrep(); } }
 // マップをタップした(準備中の店長)
-function tapPrep(sx, sy) {
-  if (!G || G.phase !== "prep" || G.role !== "boss" || G.readyMe) return;
+async function tapPrep(sx, sy) {
+  if (!G || G.phase !== "prep" || G.role !== "boss" || G.readyMe || G.busy) return;
   const tx = Math.floor((sx + camX) / T), ty = Math.floor((sy + camY) / T);
   const old = trapOn(tx, ty);
-  if (old) {
+  if (!G.armed) {
+    if (!old) return prepMsg("先にトラップを2回タップして選んでね");
+    // 外す(払ったお金はもどる)
     G.traps = G.traps.filter(k => k !== old);
-    prepMsg(`${TRAPS[old.type].name}を外した`);
-  } else {
-    if (!G.selTrap) return prepMsg("先にトラップの種類を選んでね");
-    const why = trapProblem(G.selTrap, tx, ty);
-    if (why) return prepMsg(why);
-    G.traps.push({ id: newTrapId(), type: G.selTrap, x: tx, y: ty });
-    prepMsg(`${TRAPS[G.selTrap].name}を置いた`);
+    G.selTrap = null;
+    const d = TRAPS[old.type];
+    prepMsg(`${d.name}を外した` + (G.online && d.price ? `(${d.price}🪙もどった)` : ""));
+    if (G.online) { G.hooks.setTraps(G.traps); if (d.price) G.hooks.refund(old.type); }
+    return renderPrep();
   }
+  const type = G.armed, d = TRAPS[type];
+  const why = trapProblem(type, tx, ty);
+  if (why) return prepMsg(why);
+  if (G.online && d.price) {
+    // 置いた時に払う
+    G.busy = true;
+    const ok = await G.hooks.buy(type);
+    G.busy = false;
+    if (!G || G.phase !== "prep") return;
+    if (!ok) return prepMsg("コインが足りない");
+    G.coins = Math.max(0, (G.coins || 0) - d.price); // 画面の数字を先に減らしておく
+  }
+  G.traps.push({ id: newTrapId(), type, x: tx, y: ty });
+  G.armed = null;
+  prepMsg(`${d.name}を置いた`);
   if (G.online) G.hooks.setTraps(G.traps);
   renderPrep();
 }
+document.getElementById("prepCancel").addEventListener("click", cancelPick);
 document.getElementById("prepOk").addEventListener("click", () => {
   if (!G || G.phase !== "prep") return;
   if (G.online) { G.readyMe = true; G.hooks.ready(); renderPrep(); }

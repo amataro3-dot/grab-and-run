@@ -194,8 +194,8 @@ function newGame(role, door) {
   if (role === "thief") { randomTraps(PRACTICE_TRAPS); beginPlay(); }
   else {
     // 店長: 先にトラップを置く
-    G.phase = "prep"; G.selTrap = "rat";
-    $("prep").classList.remove("hidden"); prepMsg("種類を選んで、マップをタップ(もう一度タップで外す)。なぞると移動");
+    G.phase = "prep"; startPan();
+    $("prep").classList.remove("hidden"); prepMsg(PREP_HELP);
     renderPrep();
   }
 }
@@ -232,7 +232,7 @@ function nearestItem(t) {
 }
 // 画面に映す人(自分。泥棒で捕まったら仲間を観戦)
 function viewer() {
-  if (G.role === "boss") return G.boss;
+  if (G.role === "boss") return panning() ? G.pan : G.boss;
   if (G.online) return (!G.me.out && G.me.in) ? G.me : (alive()[0] || G.me);
   return G.thieves.find(t => !t.out) || G.thieves[0];
 }
@@ -247,6 +247,8 @@ cv.addEventListener("pointerdown", e => {
 });
 cv.addEventListener("pointermove", e => {
   if (!joy || e.pointerId !== joy.id) return;
+  // 準備中の店長: なぞるとマップが動く(指と同じ向きにマップがついてくる)
+  if (panning()) panBy(-(e.clientX - joy.x) / T, -(e.clientY - joy.y) / T);
   joy.x = e.clientX; joy.y = e.clientY;
   if (Math.hypot(joy.x - joy.ox, joy.y - joy.oy) > 12) joy.far = true;
 });
@@ -258,6 +260,20 @@ for (const ev of ["pointerup", "pointercancel", "pointerleave"])
     joy = null;
   });
 addEventListener("keydown", e => keys.add(e.key.toLowerCase()));
+
+/* ---------- 準備中の店長: マップを動かす ---------- */
+// G.pan = 画面の真ん中に映すマップの場所(マス)。店長は動かさない
+const panning = () => !!(G && G.phase === "prep" && G.role === "boss" && G.pan);
+function startPan() { G.pan = { x: G.boss.x, y: G.boss.y }; G.armed = null; G.selTrap = null; joy = null; }
+function panBy(dx, dy) {
+  const p = G.pan;
+  p.x += dx; p.y += dy;
+  // マップの外へ行きすぎないように(上はトラップの一覧に隠れる分だけ余分に)
+  const top = ($("prep").offsetHeight || 0) / T, hx = cw / 2 / T, hy = ch / 2 / T;
+  const lim = (v, a, b) => a > b ? (a + b) / 2 : Math.max(a, Math.min(b, v));
+  p.x = lim(p.x, hx - 1, MW - hx + 1);
+  p.y = lim(p.y, hy - 2 - top, MH - hy + 2);
+}
 addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
 
 const JOY_R = 56;
@@ -500,8 +516,8 @@ function runPolice(dt, nPlayers, catches, catchDist, onCatch) {
 /* ---------- 毎フレームの処理 ---------- */
 function update(dt) {
   if (G && G.phase === "prep") {
-    // 準備中: 店長だけ動ける(トラップを置く場所を見に行く)
-    const [dx, dy] = inputDir(); moveBy(G.boss, dx * BOSS_HUMAN * dt, dy * BOSS_HUMAN * dt);
+    // 準備中: 時間は止まっている。キーボードの矢印でもマップを動かせる
+    if (!joy) { const [dx, dy] = inputDir(); panBy(dx * 10 * dt, dy * 10 * dt); }
     return;
   }
   if (!G || G.phase !== "play") return;
@@ -615,8 +631,8 @@ function follow(e, dt) {
 function updateOnline(dt) {
   const m = G.me, b = G.boss;
   if (G.phase === "prep") {
-    // 準備中: 店長だけ動ける。時間は止まっている
-    if (m === b) { const [dx, dy] = inputDir(); moveBy(b, dx * BOSS_HUMAN * dt, dy * BOSS_HUMAN * dt); }
+    // 準備中: 時間は止まっている。店長はマップを動かすだけ(キーボードの矢印でも動く)
+    if (m === b) { if (!joy) { const [dx, dy] = inputDir(); panBy(dx * 10 * dt, dy * 10 * dt); } }
     else follow(b, dt);
     return;
   }
@@ -699,7 +715,7 @@ function startOnline(opts) {
   $("grab").classList.toggle("hidden", role !== "thief" || prep);
   $("door").classList.toggle("hidden", role !== "thief" || G.me.in);
   $("prep").classList.toggle("hidden", !(prep && role === "boss"));
-  if (prep && role === "boss") prepMsg("種類を選んで、マップをタップ(もう一度タップで外す)。なぞると移動");
+  if (prep && role === "boss") { startPan(); prepMsg(PREP_HELP); }
   $("doorNote").textContent = `${opts.label || ""}　あなたは泥棒。店長は ${boss.name} さん`;
   if (role === "boss") popup(boss, (opts.label ? opts.label + " " : "") + "あなたが店長!");
   return G;
@@ -799,7 +815,8 @@ function draw() {
   // カメラ(見ている人が真ん中、マップの外は映しすぎない)
   let cx = v.x * T - cw / 2, cy = v.y * T - ch / 2;
   cx = Math.max(-T, Math.min(MW * T - cw + T, cx));
-  cy = Math.max(-T * 2, Math.min(MH * T - ch + T * 2, cy));
+  const topRoom = panning() ? ($("prep").offsetHeight || 0) : 0; // 準備中は一覧に隠れる分だけ上まで見られる
+  cy = Math.max(-T * 2 - topRoom, Math.min(MH * T - ch + T * 2, cy));
   camX = cx; camY = cy;
   ctx.save(); ctx.translate(-cx, -cy);
 
@@ -877,15 +894,17 @@ function draw() {
   ctx.globalAlpha = 1;
   ctx.restore();
 
-  // 見える範囲の外を暗くする
+  // 見える範囲の外を暗くする(準備中の店長は、マップ全体が見える)
+  if (!panning()) {
   const sx = v.x * T - cx, sy = v.y * T - cy, vr = sight * T;
   const g = ctx.createRadialGradient(sx, sy, vr * 0.55, sx, sy, vr);
   g.addColorStop(0, "rgba(5,4,8,0)"); g.addColorStop(1, "rgba(5,4,8,0.8)");
   ctx.fillStyle = g; ctx.fillRect(0, 0, cw, ch);
+  }
   if (isBoss) drawBossOverlay(cx, cy);
 
-  // スティック
-  if (joy) {
+  // スティック(準備中の店長はマップを動かすだけなので出さない)
+  if (joy && !panning()) {
     ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.arc(joy.ox, joy.oy, JOY_R, 0, 7); ctx.stroke();
     let kx = joy.x - joy.ox, ky = joy.y - joy.oy; const m = Math.hypot(kx, ky);
