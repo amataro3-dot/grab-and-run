@@ -56,11 +56,11 @@ const ITEM_SPOTS = [
 
 /* ---------- 調整用の数字 ---------- */
 const ROUND_SEC = 180;        // 1ラウンドの長さ
-const THIEF_SPEED = 3.2;      // 泥棒の速さ(マス/秒)
+const THIEF_SPEED = 4.2;      // 泥棒の速さ(マス/秒)
 const SLOW_PER_WEIGHT = 0.07; // 重さ1につき遅くなる割合
 const MIN_SPEED_RATE = 0.3;   // どれだけ持ってもこれより遅くならない
-const BOSS_PATROL = 2.4;      // 店長の見回りの速さ
-const BOSS_CHASE = 3.8;       // 店長が追いかける速さ
+const BOSS_PATROL = 3.2;      // 店長の見回りの速さ
+const BOSS_CHASE = 5.0;       // 店長が追いかける速さ
 const BOSS_SIGHT = 6;         // 店長が泥棒に気づく距離
 const THIEF_SIGHT = 4.5;      // 泥棒の視界
 const CATCH_DIST = 0.6;       // これより近づいたら捕まる
