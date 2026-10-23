@@ -1,7 +1,7 @@
 /* ロビー(オンライン対戦の待合室)
    名前を入れる → ルームを作る(4桁のコード) or コードで参加 → 待合室 → ホストがスタート
    ルームのデータは rooms/gr-1234 に置く:
-     meta:    { host: ホストの人のID, started: 始まったか, created: 作った時刻 }
+     meta:    { host: ホストの人のID, started: 始まったか, created: 作った時刻, cpus: CPUの数 }
      players: { 人のID: { name: 名前, joinedAt: 入った時刻, online: つながっているか } }
    店長の順番は、入った順(joinedAt が小さい順)。 */
 import {
@@ -102,7 +102,7 @@ $("lbJoin").addEventListener("click", () => guard(async () => {
   const players = data.players || {};
   if (!players[uid]) {
     if (data.meta && data.meta.started) return entryMsg("もう始まっています。終わるまで待ってね");
-    if (Object.keys(players).length >= MAX_PLAYERS) return entryMsg(`満員です(最大${MAX_PLAYERS}人)`);
+    if (Object.keys(players).length + ((data.meta && data.meta.cpus) || 0) >= MAX_PLAYERS) return entryMsg(`満員です(最大${MAX_PLAYERS}人。CPUもふくむ)`);
     await set(ref(db, roomPath(c) + "/players/" + uid), { name, joinedAt: serverTimestamp(), online: true });
   } else {
     await update(ref(db, roomPath(c) + "/players/" + uid), { name });
@@ -178,6 +178,7 @@ function render() {
   const iAmHost = hostId === uid;
   const started = !!(room.meta && room.meta.started);
   const onlineCount = list.filter(isOnline).length;
+  const cpus = cpuCount();
 
   const ol = $("lbPlayers");
   ol.textContent = "";
@@ -198,29 +199,54 @@ function render() {
     }
     ol.append(li);
   }
-  $("lbCount").textContent = `${list.length} / ${MAX_PLAYERS}人`;
+  // CPU(待合室の一番下。ホストだけ増やしたりへらしたりできる)
+  const ul = $("lbCpus");
+  ul.textContent = "";
+  for (let k = 1; k <= cpus; k++) {
+    const li = document.createElement("li");
+    li.textContent = `CPU${k}`;
+    ul.append(li);
+  }
+  $("lbCpuBtns").classList.toggle("hidden", !iAmHost || started);
+  $("lbCpuMinus").disabled = cpus <= 0;
+  $("lbCpuPlus").disabled = list.length + cpus >= MAX_PLAYERS;
+  $("lbCount").textContent = `${list.length + cpus} / ${MAX_PLAYERS}人`;
 
   let note;
   if (started) note = "試合中です。終わるまで待ってね";
-  else if (iAmHost) note = onlineCount < MIN_PLAYERS ? `${MIN_PLAYERS}人以上そろったらスタートできます` : "みんなそろったらスタートを押してね";
+  else if (iAmHost) note = onlineCount + cpus < MIN_PLAYERS ? `${MIN_PLAYERS}人以上(CPUもふくむ)そろったらスタートできます` : "みんなそろったらスタートを押してね";
   else note = "ホストがスタートするのを待っています";
   $("lbRoomMsg").textContent = note;
 
   $("lbStart").classList.toggle("hidden", !iAmHost || started);
-  $("lbStart").disabled = onlineCount < MIN_PLAYERS;
+  $("lbStart").disabled = onlineCount + cpus < MIN_PLAYERS;
   $("lbReset").classList.toggle("hidden", !iAmHost || !started);
 }
 
 $("lbStart").addEventListener("click", () => guard(async () => {
   if (!room || room.meta.host !== uid) return;
   const list = playerList();
-  if (list.filter(isOnline).length < MIN_PLAYERS) return;
+  const on = list.filter(isOnline);
+  const cpus = Math.min(cpuCount(), MAX_PLAYERS - on.length); // 人が増えていたら、入りきらないCPUは外す
+  if (on.length + cpus < MIN_PLAYERS) return;
   // 切断中の人はこの試合に入れない
-  const { match, game } = makeMatch(list.filter(isOnline));
+  const { match, game } = makeMatch(on, cpus);
   const changes = { "meta/started": true, "meta/startedAt": serverTimestamp(), match, game };
   for (const p of list) if (!isOnline(p)) changes["players/" + p.id] = null;
   await update(ref(db, roomPath(code)), changes);
 }));
+
+// CPUの数(ホストだけ変えられる。人と合わせて最大8人)
+const cpuCount = () => Math.max(0, (room && room.meta && room.meta.cpus) || 0);
+function changeCpus(d) {
+  return guard(async () => {
+    if (!room || room.meta.host !== uid || room.meta.started) return;
+    const n = Math.max(0, Math.min(MAX_PLAYERS - playerList().length, cpuCount() + d));
+    await update(ref(db, roomPath(code) + "/meta"), { cpus: n });
+  });
+}
+$("lbCpuPlus").addEventListener("click", () => changeCpus(1));
+$("lbCpuMinus").addEventListener("click", () => changeCpus(-1));
 
 // ロビーにもどす(待合室のボタンと、結果画面のボタン)
 const backToRoom = () => guard(async () => {

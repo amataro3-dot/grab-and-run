@@ -59,12 +59,18 @@
       <li>店長：泥棒にさわると捕まえられる</li>
     </ul>
   </div>
-  <p class="sub">泥棒であそぶ(自分 + CPUの仲間)<br>どこから入る？</p>
+  <div class="count">
+    <span>人数</span>
+    <button class="btn ghost" id="pcMinus" aria-label="へらす">◀</button>
+    <b id="pcNum">3人</b>
+    <button class="btn ghost" id="pcPlus" aria-label="ふやす">▶</button>
+  </div>
+  <p class="sub" id="pcThief">泥棒であそぶ(自分 + CPUの仲間)<br>どこから入る？</p>
   <div class="btns">
     <button class="btn" data-role="thief" data-door="front">表の入り口</button>
     <button class="btn" data-role="thief" data-door="back">裏口</button>
   </div>
-  <p class="sub">店長であそぶ(CPUの泥棒2人)</p>
+  <p class="sub" id="pcBoss">店長であそぶ(CPUの泥棒2人)</p>
   <div class="btns">
     <button class="btn boss" data-role="boss">店長になる</button>
   </div>
@@ -123,7 +129,13 @@
     <div class="card players">
       <div class="players-head"><span>参加者</span><span id="lbCount"></span></div>
       <ol id="lbPlayers"></ol>
-      <p class="sub small">番号は店長をやる順番</p>
+      <ul id="lbCpus"></ul>
+      <div class="cpu-btns" id="lbCpuBtns">
+        <span>CPU</span>
+        <button class="btn ghost" id="lbCpuMinus">へらす</button>
+        <button class="btn ghost" id="lbCpuPlus">追加</button>
+      </div>
+      <p class="sub small">番号は店長をやる順番(CPUは店長をやらない)</p>
     </div>
     <p class="msg" id="lbRoomMsg"></p>
     <button class="btn" id="lbStart">スタート</button>

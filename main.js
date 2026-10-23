@@ -179,11 +179,31 @@ function makeThief(i, name, cpu, spawn) {
 }
 const randomDoor = () => DOORS[Math.random() < 0.5 ? "front" : "back"][Math.floor(Math.random() * 2)];
 
+/* 練習の人数(自分 + CPU。店長も1人に数える) */
+const PRACTICE_MIN = 2, PRACTICE_MAX = 8;
+let practiceN = 3;
+try { practiceN = Math.min(PRACTICE_MAX, Math.max(PRACTICE_MIN, +localStorage.getItem("grab_practice") || 3)); } catch (e) {}
+function renderPracticeCount() {
+  $("pcNum").textContent = practiceN + "人";
+  $("pcMinus").disabled = practiceN <= PRACTICE_MIN; $("pcPlus").disabled = practiceN >= PRACTICE_MAX;
+  const allies = practiceN - 2;
+  $("pcThief").innerHTML = `泥棒であそぶ(自分${allies ? ` + CPUの仲間${allies}人` : "だけ"})<br>どこから入る？`;
+  $("pcBoss").textContent = `店長であそぶ(CPUの泥棒${practiceN - 1}人)`;
+}
+for (const [id, d] of [["pcMinus", -1], ["pcPlus", 1]]) $(id).addEventListener("click", () => {
+  practiceN = Math.min(PRACTICE_MAX, Math.max(PRACTICE_MIN, practiceN + d));
+  try { localStorage.setItem("grab_practice", practiceN); } catch (e) {}
+  renderPracticeCount();
+});
+renderPracticeCount();
+
 function newGame(role, door) {
   const items = ITEM_SPOTS.map(([type, x, y], i) => ({ id: i, type, x: x + 0.5, y: y + 0.5, claim: null }));
+  // 泥棒: 自分 + CPUの仲間(人数−2人)。店長: CPUの泥棒(人数−1人)
   const thieves = role === "thief"
-    ? [makeThief(0, "あなた", false, DOORS[door][0]), makeThief(1, "仲間(CPU)", true, randomDoor())]
-    : [makeThief(0, "CPU 1", true, randomDoor()), makeThief(1, "CPU 2", true, randomDoor())];
+    ? [makeThief(0, "あなた", false, DOORS[door][0]),
+       ...Array.from({ length: practiceN - 2 }, (_, k) => makeThief(k + 1, practiceN > 3 ? `仲間${k + 1}` : "仲間", true, randomDoor()))]
+    : Array.from({ length: practiceN - 1 }, (_, k) => makeThief(k, `CPU ${k + 1}`, true, randomDoor()));
   if (role === "thief") thieves[0].ai.wait = 0;
   G = {
     phase: "play", role, time: ROUND_SEC, items, thieves,
@@ -562,7 +582,7 @@ function update(dt) {
 
   updateDoors(); updateMarks(dt);
 
-  // 警察(3人なので1人まで)
+  // 警察(上限は 人数−2)
   runPolice(dt, G.thieves.length + 1, G.thieves.filter(t => t.out).length, CATCH_DIST, t => {
     t.out = true; t.byPolice = true;
     if (t.ai.target) t.ai.target.claim = null;
@@ -637,7 +657,8 @@ function updateOnline(dt) {
     return;
   }
   G.time = Math.max(0, G.time - dt);
-  for (const t of G.thieves) if (t !== m) follow(t, dt);
+  for (const t of G.thieves) if (t !== m && !(t.cpu && G.host)) follow(t, dt);
+  if (G.host) runOnlineCpus(dt);
   if (b !== m) follow(b, dt);
 
   if (m === b) {
@@ -689,11 +710,44 @@ function updateOnline(dt) {
   G.popups = G.popups.filter(p => p.t < 1.2);
 }
 
+/* オンラインのCPU泥棒(ホストのスマホだけが動かす)
+   はじめは入り口の外にいて、少し待ってから好きな入り口から入る。
+   盗めたかは人と同じく G.hooks.grab で聞く(先に取った人の勝ち) */
+function runOnlineCpus(dt) {
+  for (const t of G.thieves) {
+    if (!t.cpu || t.out) continue;
+    if (!t.in) {
+      if ((t.ai.enter = (t.ai.enter ?? rand(0.5, 3)) - dt) > 0) continue;
+      const d = randomDoor(); t.x = d.x; t.y = d.y; t.in = true;
+      t.ai.wait = 0; t.ai.mode = "think";
+      continue;
+    }
+    if (t.grab && !t.grab.wait) {
+      const it = G.items.find(i => i.id === t.grab.id);
+      if (!it || dist(t, it) > GRAB_RANGE) t.grab = null;
+      else if ((t.grab.t += dt) >= t.grab.dur) {
+        t.grab.wait = true; t.grab.t = t.grab.dur;
+        const game = G;
+        G.hooks.grab(it).then(ok => {
+          if (G !== game || t.out) return;
+          t.grab = null; t.ai.mode = "think"; t.ai.target = null; it.claim = null;
+          if (!ok) return; // 人に先に取られた
+          G.items = G.items.filter(i => i.id !== it.id);
+          takeItem(t, it);
+        });
+      }
+    }
+    if (t.grab && t.grab.wait) continue; // 返事を待っている間はじっとする
+    stepThief(t, dt, () => cpuThief(t, dt));
+    if (checkSpot(t)) { t.ai.greed = rand(3, 7); t.ai.mode = "think"; t.ai.wait = rand(0.3, 1); }
+  }
+}
+
 /* オンライン対戦を始める(online.js から呼ぶ)
    opts: { myId, bossId, players: [{ id, name, i }], itemIds: 残っている品物の番号, time, hooks } */
 function startOnline(opts) {
   const thieves = opts.players.filter(p => p.id !== opts.bossId).map(p => {
-    const t = makeThief(p.i, p.name, false, DOORS.front[0]);
+    const t = makeThief(p.i, p.name, !!p.cpu, DOORS.front[0]);
     t.id = p.id; t.in = false;
     return t;
   });
@@ -766,10 +820,11 @@ function finish(why) {
       `捕まえた ${G.boss.caught}人 ／ 盗まれた ${stolen}点<br>` +
       G.thieves.map(t => `${t.name}：${t.bank}点${t.out ? (t.byPolice ? "(警察)" : "(捕まった)") : ""}`).join("　"));
   } else {
-    const [m, p] = G.thieves;
+    const [m, ...pals] = G.thieves;
     showResult(m.out ? (m.byPolice ? "警察に捕まった！" : "捕まった！") : why === "clear" ? "ぜんぶ盗んだ！" : why === "allCaught" ? "全員捕まった…" : "時間切れ",
       m.bank + "点",
-      `仲間(CPU)：${p.bank}点${p.out ? (p.byPolice ? "(警察)" : "(捕まった)") : ""}<br>手に持ったままの品物は没収されます`);
+      pals.map(p => `${p.name}：${p.bank}点${p.out ? (p.byPolice ? "(警察)" : "(捕まった)") : ""}`).join("　") +
+      (pals.length ? "<br>" : "") + "手に持ったままの品物は没収されます");
   }
 }
 
@@ -866,7 +921,7 @@ function draw() {
       ctx.strokeStyle = THIEF_COLORS[t.i]; ctx.lineWidth = 4;
       ctx.beginPath(); ctx.arc(t.x * T, t.y * T, R * T + 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * t.grab.t / t.grab.dur); ctx.stroke();
     }
-    const label = G.online ? (t === G.me ? "" : t.name) : t.cpu && !isBoss ? "仲間" : "";
+    const label = G.online ? (t === G.me ? "" : t.name) : t.cpu && !isBoss ? t.name : "";
     if (label) { ctx.fillStyle = "#fff"; ctx.font = `700 ${T * 0.24}px sans-serif`; ctx.fillText(label, t.x * T, (t.y + 0.58) * T); }
     ctx.globalAlpha = 1;
   }

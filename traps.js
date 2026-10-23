@@ -99,7 +99,7 @@ function thiefEffects(t, dt) {
   const k = G.traps.find(k => k.x === tx && k.y === ty && !k.fired && !PASSIVE_TRAPS.includes(k.type));
   if (!k) return;
   k.fired = true; // 二重に発動しないように
-  if (G.online) G.hooks.trap(k).then(ok => { if (ok && G && G.me === t && !t.out) applyTrap(t, k); });
+  if (G.online) G.hooks.trap(k).then(ok => { if (ok && G && (G.me === t || t.cpu) && !t.out) applyTrap(t, k); }); // CPUはホストが動かしている
   else { G.traps = G.traps.filter(q => q !== k); applyTrap(t, k); }
 }
 function applyTrap(t, k) {

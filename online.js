@@ -1,11 +1,11 @@
 /* オンライン対戦の通信係
    全体の流れ(rooms/gr-1234/match): 全員が1回ずつ店長をやり、合計点で順位を決める
-     order:  店長の順番(入った順の人のID)、names: { 人のID: 名前 }
+     order:  店長の順番(入った順の人のID。CPUは入らない)、names: { 人のID: 名前 }、cpus: CPUのID ["cpu1", …]
      round:  今が何ラウンド目か(0から)、totals: { 人のID: 合計点 }、coins: { 人のID: コイン }
    1ラウンドのデータ(rooms/gr-1234/game):
      round:   ラウンドごとの番号(ラウンドが変わるたびに変わる)、no: 何ラウンド目か
      boss:    店長の人のID(match.order[no])
-     players: { 人のID: { name, i: 入った順 } }   … この試合に出ている人
+     players: { 人のID: { name, i: 入った順, cpu: CPUなら true } } … この試合に出ている人(CPUは泥棒だけ)
      items:   { i0: true, i1: true, … }          … 残っている品物(取られたら消える)
      pos:     { 人のID: { x, y, f: 向き, in: 店に入ったか, h: 隠れているか, g: 盗む長押しの進み具合,
                           c: 手持ち("meat,wine" のように), b: 持ち出した点数, fl: 小麦粉, dg: 変装中 } }
@@ -18,7 +18,8 @@
      gear:    { 人のID: { 種類: 数 } } … ショップで買った物(このラウンドだけ)
      closed:  { k…: { x, y, until } } … 閉まった自動ロック扉、alerts: 鳴ったブザー、smoke: 使われたけむり玉
      scores:  { 人のID: このラウンドの点数 }
-   自分の pos は自分だけが書く。捕まえた記録は店長、時間と終わりはホストが書く。 */
+   自分の pos は自分だけが書く。捕まえた記録は店長、時間と終わりはホストが書く。
+   CPUの泥棒はホストのスマホが動かして、pos も書く(警察と同じ)。CPUは店長をやらず、コインもない。 */
 import { db, ref, set, update, runTransaction } from "./firebase.js";
 
 const SEND_MS = 100;   // 自分の位置を送る間隔(1秒に10回)
@@ -35,18 +36,21 @@ const gamePath = () => roomPathOf() + "/game";
 const isHost = () => !!(S && room && room.meta && room.meta.host === S.uid);
 const itemIds = game => Object.keys(game.items || {}).filter(k => game.items[k]).map(k => +k.slice(1));
 
-const online = id => !!(room && room.players && room.players[id] && room.players[id].online !== false);
+const online = id => isCpu(id) || !!(room && room.players && room.players[id] && room.players[id].online !== false);
 
 /* ホストがスタートを押したときに作るデータ。list は入った順に並んだ、つながっている人 */
-export function makeMatch(list) {
-  const match = { order: list.map(p => p.id), names: {}, totals: {}, coins: {}, round: 0 };
+export function makeMatch(list, nCpu = 0) {
+  const match = { order: list.map(p => p.id), names: {}, totals: {}, coins: {}, round: 0, cpus: [] };
   for (const p of list) { match.names[p.id] = p.name || "?"; match.totals[p.id] = 0; match.coins[p.id] = GR.START_COINS; }
+  for (let k = 1; k <= nCpu; k++) { const id = "cpu" + k; match.cpus.push(id); match.names[id] = "CPU" + k; match.totals[id] = 0; }
   return { match, game: makeRound(match, 0, match.order) };
 }
+const isCpu = id => /^cpu\d+$/.test(id);
 // r ラウンド目のデータ。ids = 出る人(入った順)
 function makeRound(match, r, ids) {
   const players = {}, items = {};
   ids.forEach((id, i) => { players[id] = { name: match.names[id] || "?", i }; });
+  (match.cpus || []).forEach((id, k) => { players[id] = { name: match.names[id] || "CPU", i: ids.length + k, cpu: true }; });
   GR.ITEM_SPOTS.forEach((_, i) => { items["i" + i] = true; });
   return {
     round: Date.now() + "-" + Math.floor(Math.random() * 1e6), no: r,
@@ -75,10 +79,10 @@ function start(game, uid, code) {
   stop();
   S = { code, uid, round: game.round, lastT: game.t, wroteT: null, ending: false, pending: null, lastSent: "" };
   const list = Object.entries(game.players)
-    .map(([id, p]) => ({ id, name: p.name, order: p.i }))
+    .map(([id, p]) => ({ id, name: p.name, order: p.i, cpu: !!p.cpu }))
     .sort((a, b) => a.order - b.order);
   let n = 0; // 泥棒の色の番号
-  const players = list.map(p => ({ id: p.id, name: p.name, i: p.id === game.boss ? 0 : n++ }));
+  const players = list.map(p => ({ id: p.id, name: p.name, cpu: p.cpu, i: p.id === game.boss ? 0 : n++ }));
   const G = GR.startOnline({
     myId: uid, bossId: game.boss, players, itemIds: itemIds(game),
     time: game.t ?? GR.ROUND_SEC, phase: game.phase === "prep" ? "prep" : "play",
@@ -119,9 +123,10 @@ function apply(game) {
   G.items = G.items.filter(it => left.has(it.id));
 
   // ほかの人の位置や手持ち
+  G.host = isHost();
   for (const e of [G.boss, ...G.thieves]) {
     const p = pos[e.id];
-    if (e === G.me || !p) continue;
+    if (e === G.me || !p || (e.cpu && G.host)) continue; // ホストは自分でCPUを動かしている
     if (e.tx === undefined) { e.x = p.x; e.y = p.y; }
     e.tx = p.x; e.ty = p.y; e.face = p.f || 1; e.in = !!p.in;
     if (e === G.boss) continue;
@@ -133,9 +138,10 @@ function apply(game) {
 
   // 捕まった人・抜けた人は脱落
   for (const t of G.thieves) {
-    const gone = !players[t.id] || players[t.id].online === false;
+    const gone = !t.cpu && (!players[t.id] || players[t.id].online === false);
     const wasOut = t.out;
     t.out = !!caughtList[t.id] || (t !== G.me && gone);
+    if (t.out && !wasOut && t.cpu) { t.carry = []; t.grab = null; if (t.ai.target) { t.ai.target.claim = null; t.ai.target = null; } }
     if (t === G.me && t.out && !wasOut) {
       t.carry = []; t.grab = null; // 手に持っていた品物は没収
       t.byPolice = caughtList[t.id] === "police";
@@ -200,6 +206,20 @@ function send() {
     S.lastSent = j;
     set(ref(db, gamePath() + "/pos/" + S.uid), st).catch(() => { s.lastSent = ""; });
   }
+  // ホストはCPUの泥棒の位置も送る
+  if (G.host) for (const t of G.thieves) {
+    if (!t.cpu) continue;
+    const cs = {
+      x: r2(t.x), y: r2(t.y), f: t.face || 1, in: t.in ? 1 : 0, h: t.hidden ? 1 : 0,
+      g: t.grab ? r2(Math.min(1, t.grab.t / t.grab.dur)) : 0, c: t.carry.join(","), b: t.bank, fl: t.flour > 0 ? 1 : 0, dg: 0,
+    };
+    const cj = JSON.stringify(cs);
+    S.lastCpu = S.lastCpu || {};
+    if (cj !== S.lastCpu[t.id]) {
+      S.lastCpu[t.id] = cj;
+      set(ref(db, gamePath() + "/pos/" + t.id), cs).catch(() => { s.lastCpu[t.id] = ""; });
+    }
+  }
   // ホストは警察の位置も送る
   if (G.host && G.phase === "play" && G.police.length) {
     const pol = {};
@@ -227,7 +247,7 @@ async function caught(t, by) {
     await update(ref(db, gamePath() + "/caught"), { [t.id]: by === "police" ? "police" : true });
   } catch (e) { t.catching = false; return; }
   let taken = 0;
-  await addCoins(s, t.id, v => { taken = Math.floor(v / 2); return v - taken; });
+  if (!t.cpu) await addCoins(s, t.id, v => { taken = Math.floor(v / 2); return v - taken; }); // CPUはコインなし
   if (by !== "police") await addCoins(s, s.uid, v => v + taken + GR.BOSS_COIN_PER_CATCH);
 }
 // コインを変える(トランザクションで。f が undefined を返したらやめる)
@@ -322,7 +342,7 @@ function hostPrep(game) {
   const left = Math.max(0, Math.ceil((S.prepEnd - performance.now()) / 1000));
   if (left !== game.prep && left !== S.wrotePrep) { S.wrotePrep = left; update(ref(db, gamePath()), { prep: left }).catch(() => {}); }
   const rd = game.ready || {};
-  const thieves = Object.keys(game.players).filter(id => id !== game.boss && online(id));
+  const thieves = Object.keys(game.players).filter(id => id !== game.boss && !isCpu(id) && online(id)); // CPUはいつでも準備OK
   const allReady = rd[game.boss] && thieves.every(id => rd[id]);
   if ((allReady || left <= 0 || !online(game.boss)) && !S.starting) {
     S.starting = true;
@@ -336,7 +356,8 @@ function roundScores(game, G) {
   let stolen = 0, catches = 0;
   for (const id of Object.keys(game.players)) {
     if (id === game.boss) continue;
-    const b = id === S.uid ? G.me.bank : ((pos[id] && pos[id].b) || 0);
+    const cpu = isCpu(id) && G.thieves.find(t => t.id === id);
+    const b = id === S.uid ? G.me.bank : cpu ? cpu.bank : ((pos[id] && pos[id].b) || 0);
     scores[id] = b; stolen += b;
     if (caughtList[id] === true) catches++;
   }
@@ -347,7 +368,7 @@ function roundScores(game, G) {
 function endReason(game, G) {
   if (G.time <= 0) return "time";
   const players = room.players || {}, pos = game.pos || {}, caughtList = game.caught || {};
-  const on = id => players[id] && players[id].online !== false;
+  const on = id => isCpu(id) || (players[id] && players[id].online !== false);
   if (!on(game.boss)) return "bossLeft";
   const alive = Object.keys(game.players).filter(id => id !== game.boss && !caughtList[id] && on(id));
   if (!alive.length) return "allCaught";
@@ -379,12 +400,12 @@ function showEnd(game) {
   // 合計の順位(同じ点なら同じ順位)
   let myRank = 0;
   if (m) {
-    const ids = [...m.order].sort((a, b) => (m.totals[b] || 0) - (m.totals[a] || 0));
+    const ids = [...m.order, ...(m.cpus || [])].sort((a, b) => (m.totals[b] || 0) - (m.totals[a] || 0));
     html += `<div class="rk-head">合計${final ? "(最終)" : ""}</div>`;
     ids.forEach(id => {
       const rank = 1 + ids.filter(o => (m.totals[o] || 0) > (m.totals[id] || 0)).length;
       if (id === S.uid) myRank = rank;
-      html += row(id, `${m.totals[id] || 0}点 <small>🪙${(m.coins && m.coins[id]) || 0}</small>`, `${MEDAL[rank - 1] || rank + "位"} `);
+      html += row(id, `${m.totals[id] || 0}点 ${isCpu(id) ? "<small>CPU</small>" : `<small>🪙${(m.coins && m.coins[id]) || 0}</small>`}`, `${MEDAL[rank - 1] || rank + "位"} `);
     });
   }
   const mine = sc[S.uid] || 0;
