@@ -9,7 +9,8 @@
      items:   { i0: true, i1: true, … }          … 残っている品物(取られたら消える)
      pos:     { 人のID: { x, y, f: 向き, in: 店に入ったか, h: 隠れているか, g: 盗む長押しの進み具合,
                           c: 手持ち("meat,wine" のように), b: 持ち出した点数 } }
-     caught:  { 人のID: true }                   … 店長に捕まった泥棒
+     caught:  { 人のID: true か "police" }       … 捕まった泥棒(true = 店長、"police" = 警察)
+     police:  { p0: { x, y, f, c: 追いかけ中か } } … 警察(ホストが動かして書く)
      t:       残り秒数(ホストが1秒ごとに書く)
      phase:   "play" か "end"、why: 終わった理由、scores: { 人のID: このラウンドの点数 }
    自分の pos は自分だけが書く。捕まえた記録は店長、時間と終わりはホストが書く。 */
@@ -128,10 +129,20 @@ function apply(game) {
     t.out = !!caughtList[t.id] || (t !== G.me && gone);
     if (t === G.me && t.out && !wasOut) {
       t.carry = []; t.grab = null; // 手に持っていた品物は没収
-      GR.popup(t, "捕まった!"); GR.vibrate(300);
+      t.byPolice = caughtList[t.id] === "police";
+      GR.popup(t, t.byPolice ? "警察に捕まった!" : "捕まった!"); GR.vibrate(300);
     }
   }
-  G.boss.caught = Object.keys(caughtList).length;
+  G.boss.caught = Object.values(caughtList).filter(v => v === true).length;
+  G.catchesAll = Object.keys(caughtList).length;
+  G.host = isHost();
+
+  // 警察(ホストは自分で動かしているので、知らない警察だけ足す)
+  for (const [id, d] of Object.entries(game.police || {})) {
+    let pc = G.police.find(q => q.id === id);
+    if (!pc) { pc = GR.makePolice(id, d.x, d.y); G.police.push(pc); }
+    if (!G.host) { pc.tx = d.x; pc.ty = d.y; pc.face = d.f || 1; pc.mode = d.c ? "chase" : "patrol"; }
+  }
 
   // 時間はホストの数字に合わせる(ホストは自分で数えている)
   if (game.t !== S.lastT) { S.lastT = game.t; if (!isHost()) G.time = game.t; }
@@ -150,10 +161,21 @@ function send() {
     h: m.hidden ? 1 : 0, g: m.grab ? r2(m.grab.t / m.grab.dur) : 0, c: m.carry.join(","), b: m.bank,
   });
   const j = JSON.stringify(st);
-  if (j === S.lastSent) return;
-  S.lastSent = j;
   const s = S;
-  set(ref(db, gamePath() + "/pos/" + S.uid), st).catch(() => { s.lastSent = ""; });
+  if (j !== S.lastSent) {
+    S.lastSent = j;
+    set(ref(db, gamePath() + "/pos/" + S.uid), st).catch(() => { s.lastSent = ""; });
+  }
+  // ホストは警察の位置も送る
+  if (G.host && G.phase === "play" && G.police.length) {
+    const pol = {};
+    for (const p of G.police) pol[p.id] = { x: r2(p.x), y: r2(p.y), f: p.face || 1, c: p.mode === "chase" ? 1 : 0 };
+    const pj = JSON.stringify(pol);
+    if (pj !== S.lastPolice) {
+      S.lastPolice = pj;
+      set(ref(db, gamePath() + "/police"), pol).catch(() => { s.lastPolice = ""; });
+    }
+  }
 }
 
 /* 品物を取る。先に取った人だけ成功(トランザクション = 同時に書きこんでもぶつからない書き方) */
@@ -164,9 +186,9 @@ async function grab(it) {
   } catch (e) { return false; }
 }
 
-/* 店長が捕まえた */
-function caught(t) {
-  update(ref(db, gamePath() + "/caught"), { [t.id]: true }).catch(() => { t.catching = false; });
+/* 店長(か警察)が捕まえた */
+function caught(t, by) {
+  update(ref(db, gamePath() + "/caught"), { [t.id]: by === "police" ? "police" : true }).catch(() => { t.catching = false; });
 }
 
 /* ホストだけ: 残り時間を書き、終わりかどうか決める */
@@ -236,8 +258,9 @@ function showEnd(game) {
   const row = (id, text, extra) => `<div class="rk${id === S.uid ? " me" : ""}"><span>${extra || ""}${name(id)}</span><b>${text}</b></div>`;
   let html = `<div class="rk-head">ラウンド${(game.no || 0) + 1}${final ? "：" + (WHY[game.why] || "") : ""}</div>`;
   html += row(game.boss, `${sc[game.boss] || 0}点`, "👨‍🍳 ");
-  html += `<div class="rk-note">捕まえた ${Object.values(caughtList).filter(v => v === true).length}人</div>`;
-  for (const id of thieves) html += row(id, `${sc[id] || 0}点${caughtList[id] ? "(捕まった)" : ""}`);
+  const byPolice = Object.values(caughtList).filter(v => v === "police").length;
+  html += `<div class="rk-note">捕まえた ${Object.values(caughtList).filter(v => v === true).length}人${byPolice ? `(警察 ${byPolice}人)` : ""}</div>`;
+  for (const id of thieves) html += row(id, `${sc[id] || 0}点${caughtList[id] === "police" ? "(警察)" : caughtList[id] ? "(捕まった)" : ""}`);
 
   // 合計の順位(同じ点なら同じ順位)
   let myRank = 0;

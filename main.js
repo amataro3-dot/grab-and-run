@@ -86,6 +86,13 @@ const GRAB_RANGE = 0.9;       // 盗める距離
 const R = 0.33;               // キャラの大きさ(半径)
 const VIEW_TILES = 9;         // 画面の横に見えるマス数
 const ONLINE_CATCH_DIST = 0.8; // オンラインの捕まえる距離(通信のズレをごまかすため少し大きめ)
+const POLICE_PATROL = 2.8;    // 警察の見回りの速さ(店長より遅い)
+const POLICE_CHASE = 3.8;     // 警察が追いかける速さ
+const POLICE_SIGHT = 4;       // 警察の見える範囲
+const POLICE_AREA = 7;        // 警察がうろつく範囲(入り口・出口からこのマス数まで)
+const POLICE_MAX = 4;         // 警察の上限(人数−2 と、この数の小さいほう)
+const POLICE_START_SEC = 60;  // 開始からこの秒数で1人目
+const POLICE_EVERY_SEC = 30;  // そのあと、この秒数ごとに1人ずつ増える
 const BOSS_PER_CATCH = 50;    // 店長の点数(仮): 1人捕まえるごと
 const BOSS_KEEP_RATE = 0.25;  // 店長の点数(仮): 守った品物の点数 × この割合
 
@@ -155,6 +162,10 @@ function followPath(e, path, speed, dt) {
 }
 const FLOORS = [];
 for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) if (MAP[y][x] === ".") FLOORS.push([x, y]);
+// 警察が出てくる場所(入り口のすぐ内側)と、うろつく場所(入り口・出口の近くの床)
+const POLICE_SPAWN = [{ x: 9.5, y: 24.5 }, { x: 10.5, y: 24.5 }, { x: 8.5, y: 1.5 }, { x: 9.5, y: 1.5 }];
+const POLICE_FLOORS = FLOORS.filter(([x, y]) =>
+  [...DOORS.front, ...DOORS.back].some(d => Math.hypot(x + 0.5 - d.x, y + 0.5 - d.y) < POLICE_AREA));
 
 /* ---------- ゲームの状態 ---------- */
 let G = null;
@@ -177,7 +188,7 @@ function newGame(role, door) {
   G = {
     phase: "play", role, time: ROUND_SEC, items, thieves,
     boss: { x: 8.5, y: 10.5, face: 1, cpu: role !== "boss", path: [], mode: "patrol", lastSeen: null, repath: 0, caught: 0 },
-    popups: [],
+    popups: [], police: [],
   };
   $("start").classList.add("hidden"); $("result").classList.add("hidden");
   $("hud").classList.remove("hidden");
@@ -261,9 +272,15 @@ function bestDoorPath(t) {
   }
   return best || [];
 }
-// 店長から遠ざかる場所を探す(近くの📦や、荷物があれば出口も候補)
-function fleePath(t) {
-  const b = G.boss, [sx, sy] = tileOf(t);
+// いちばん危ない相手(店長か、見えている近くの警察)
+function threatOf(t) {
+  let b = G.boss, bd = dist(G.boss, t);
+  for (const p of G.police) { const d = dist(p, t); if (d < bd && canSee(t, p)) { b = p; bd = d; } }
+  return b;
+}
+// 危ない相手 b から遠ざかる場所を探す(近くの📦や、荷物があれば出口も候補)
+function fleePath(t, b) {
+  const [sx, sy] = tileOf(t);
   const key = (x, y) => y * MW + x;
   const prev = new Map([[key(sx, sy), -1]]), depth = new Map([[key(sx, sy), 0]]);
   const q = [[sx, sy]];
@@ -291,7 +308,7 @@ function fleePath(t) {
 }
 
 function cpuThief(t, dt) {
-  const ai = t.ai, b = G.boss;
+  const ai = t.ai, b = threatOf(t);
   if (ai.wait > 0) { ai.wait -= dt; return; }
   // 店長が近づいてきたら危険。止まっている店長は、すぐ横に来るまで気にしない
   const bd = dist(b, t);
@@ -312,7 +329,7 @@ function cpuThief(t, dt) {
   if (danger) {
     t.grab = null;
     if (ai.target) { ai.target.claim = null; ai.target = null; }
-    if (ai.mode !== "flee" || ai.repath <= 0) { ai.mode = "flee"; ai.repath = 0.4; ai.path = fleePath(t); }
+    if (ai.mode !== "flee" || ai.repath <= 0) { ai.mode = "flee"; ai.repath = 0.4; ai.path = fleePath(t, b); }
   } else if (ai.mode === "flee" && (bd > 3 || !canSee(t, b) || !ai.path.length)) { ai.mode = "think"; ai.path = []; }
 
   if (ai.mode === "think") {
@@ -394,6 +411,61 @@ function cpuBoss(dt) {
   followPath(b, b.path, b.mode === "chase" ? BOSS_CHASE : BOSS_PATROL, dt);
 }
 
+/* ---------- 警察(CPU) ----------
+   上限は 人数−2(最大4)。誰かが捕まるたびに1人、開始1分後から30秒ごとに1人増える。
+   入り口・出口の近くをうろつき、見つけた泥棒を追いかける。 */
+const policeLimit = n => Math.max(0, Math.min(POLICE_MAX, n - 2));
+function policeWanted(nPlayers, catches) {
+  const el = ROUND_SEC - G.time;
+  const timed = el >= POLICE_START_SEC ? 1 + Math.floor((el - POLICE_START_SEC) / POLICE_EVERY_SEC) : 0;
+  return Math.min(policeLimit(nPlayers), catches + timed);
+}
+function makePolice(id, x, y) { return { id, x, y, face: 1, path: [], mode: "patrol", repath: 0, lastSeen: null }; }
+function addPolice() {
+  const s = POLICE_SPAWN[Math.floor(Math.random() * POLICE_SPAWN.length)];
+  G.police.push(makePolice("p" + G.police.length, s.x, s.y));
+  popup(s, "👮 警察が来た!");
+}
+// 警察を1フレーム動かす。捕まえたら onCatch(泥棒)
+function policeStep(p, dt, catchDist, onCatch) {
+  let target = null, td = 1e9;
+  for (const t of alive()) {
+    const [tx, ty] = tileOf(t);
+    if (t.hidden || t.catching || isDoor(tx, ty)) continue;
+    const d = dist(p, t);
+    if (d < POLICE_SIGHT && d < td && canSee(p, t)) { target = t; td = d; }
+  }
+  if (target) { p.mode = "chase"; p.lastSeen = { x: target.x, y: target.y }; }
+  p.repath -= dt;
+  if (p.repath <= 0 || !p.path.length) {
+    p.repath = 0.4;
+    const [px, py] = tileOf(p);
+    let goal = null;
+    if (p.mode === "chase" && p.lastSeen) {
+      goal = [Math.floor(p.lastSeen.x), Math.floor(p.lastSeen.y)];
+      if (goal[0] === px && goal[1] === py && !target) { p.mode = "patrol"; p.lastSeen = null; goal = null; }
+    }
+    if (!goal && !p.path.length) goal = POLICE_FLOORS[Math.floor(Math.random() * POLICE_FLOORS.length)];
+    if (goal) p.path = findPath(px, py, goal[0], goal[1], false) || [];
+    if (!p.path.length && p.mode === "chase" && !target) { p.mode = "patrol"; p.lastSeen = null; }
+  }
+  followPath(p, p.path, p.mode === "chase" ? POLICE_CHASE : POLICE_PATROL, dt);
+  const [px, py] = tileOf(p);
+  for (const t of alive()) {
+    const [tx, ty] = tileOf(t);
+    if (t.catching || isDoor(tx, ty)) continue;
+    if ((!t.hidden && dist(p, t) < catchDist) || (t.hidden && px === tx && py === ty)) {
+      onCatch(t);
+      p.mode = "patrol"; p.lastSeen = null; p.path = [];
+    }
+  }
+}
+// 警察を増やして動かす(練習ではいつも、オンラインではホストだけ)
+function runPolice(dt, nPlayers, catches, catchDist, onCatch) {
+  while (G.police.length < policeWanted(nPlayers, catches)) addPolice();
+  for (const p of G.police) policeStep(p, dt, catchDist, onCatch);
+}
+
 /* ---------- 毎フレームの処理 ---------- */
 function update(dt) {
   if (!G || G.phase !== "play") return;
@@ -436,6 +508,14 @@ function update(dt) {
       b.mode = "patrol"; b.lastSeen = null; b.path = [];
     }
   }
+
+  // 警察(3人なので1人まで)
+  runPolice(dt, G.thieves.length + 1, G.thieves.filter(t => t.out).length, CATCH_DIST, t => {
+    t.out = true; t.byPolice = true;
+    if (t.ai.target) t.ai.target.claim = null;
+    popup(t, "警察に捕まった!");
+    if (!t.cpu) vibrate(200);
+  });
 
   for (const p of G.popups) p.t += dt;
   G.popups = G.popups.filter(p => p.t < 1.2);
@@ -527,6 +607,14 @@ function updateOnline(dt) {
     checkSpot(m);
   }
 
+  // 警察はホストが動かす。ほかの人は届いた位置へなめらかに
+  if (G.host) runPolice(dt, G.nPlayers, G.catchesAll, ONLINE_CATCH_DIST, t => {
+    t.catching = true;
+    popup(t, "警察が捕まえた!");
+    G.hooks.caught(t, "police");
+  });
+  else for (const p of G.police) follow(p, dt);
+
   for (const p of G.popups) p.t += dt;
   G.popups = G.popups.filter(p => p.t < 1.2);
 }
@@ -547,6 +635,7 @@ function startOnline(opts) {
   G = {
     phase: "play", online: true, role, time: opts.time, items, thieves, boss, popups: [], hooks: opts.hooks,
     me: role === "boss" ? boss : thieves.find(t => t.id === opts.myId),
+    police: [], nPlayers: opts.players.length, catchesAll: 0, host: false,
   };
   lastHud = ""; joy = null;
   for (const id of ["start", "result", "lobby"]) $(id).classList.add("hidden");
@@ -587,7 +676,7 @@ function showResult(title, score, noteHtml, online) {
 }
 
 window.GR = {
-  startOnline, stopOnline, showResult, escapeHtml, popup, vibrate,
+  makePolice, startOnline, stopOnline, showResult, escapeHtml, popup, vibrate,
   ITEMS, ITEM_SPOTS, TOTAL_PTS, ROUND_SEC, BOSS_PER_CATCH, BOSS_KEEP_RATE, get G() { return G; } };
 
 function finish(why) {
@@ -596,12 +685,12 @@ function finish(why) {
     showResult(why === "allCaught" ? "全員つかまえた！" : why === "clear" ? "ぜんぶ盗まれた…" : "閉店時間！",
       "守った " + (TOTAL_PTS - stolen) + "点",
       `捕まえた ${G.boss.caught}人 ／ 盗まれた ${stolen}点<br>` +
-      G.thieves.map(t => `${t.name}：${t.bank}点${t.out ? "(捕まった)" : ""}`).join("　"));
+      G.thieves.map(t => `${t.name}：${t.bank}点${t.out ? (t.byPolice ? "(警察)" : "(捕まった)") : ""}`).join("　"));
   } else {
     const [m, p] = G.thieves;
-    showResult(m.out ? "捕まった！" : why === "clear" ? "ぜんぶ盗んだ！" : why === "allCaught" ? "全員捕まった…" : "時間切れ",
+    showResult(m.out ? (m.byPolice ? "警察に捕まった！" : "捕まった！") : why === "clear" ? "ぜんぶ盗んだ！" : why === "allCaught" ? "全員捕まった…" : "時間切れ",
       m.bank + "点",
-      `仲間(CPU)：${p.bank}点${p.out ? "(捕まった)" : ""}<br>手に持ったままの品物は没収されます`);
+      `仲間(CPU)：${p.bank}点${p.out ? (p.byPolice ? "(警察)" : "(捕まった)") : ""}<br>手に持ったままの品物は没収されます`);
   }
 }
 
@@ -695,6 +784,13 @@ function draw() {
     ctx.globalAlpha = 1;
   }
 
+  // 警察
+  for (const p of G.police || []) {
+    if (dist(p, v) > sight + 0.5 || !canSee(v, p)) continue;
+    drawBody(p, "#2e5cb8", "👮", 1);
+    if (p.mode === "chase") { ctx.fillStyle = "#ffcc33"; ctx.font = `800 ${T * 0.5}px sans-serif`; ctx.fillText("!", p.x * T, (p.y - 0.75) * T); }
+  }
+
   // 店長
   const b = G.boss;
   if (isBoss || (dist(b, v) < sight + 0.5 && canSee(v, b))) {
@@ -737,7 +833,7 @@ function updateHud() {
   if (G.role === "boss") {
     const stolen = G.thieves.reduce((n, t) => n + t.bank, 0);
     a = "捕まえた"; b = `${G.boss.caught}/${G.thieves.length}人`;
-    c = `盗まれた ${stolen}点`; d = `残りの品物 ${G.items.length}個`;
+    c = `盗まれた ${stolen}点`; d = `残りの品物 ${G.items.length}個` + (G.police.length ? ` 👮${G.police.length}` : "");
   } else {
     const m = me();
     a = "持ち出し"; b = m.bank + "点";
@@ -745,7 +841,7 @@ function updateHud() {
     else if (!m.in) { c = "入り口を選んでね"; d = ""; }
     else {
       c = "手持ち " + (m.carry.length ? m.carry.map(k => ITEMS[k].emoji).join("") + `(${carryP(m)}点)` : "なし");
-      d = `足の速さ ${Math.round(speedRate(m) * 100)}%`;
+      d = `足の速さ ${Math.round(speedRate(m) * 100)}%` + (G.police.length ? ` 👮${G.police.length}` : "");
       const it = nearestItem(m);
       canGrab = !!it || !!m.grab;
       const opening = it && it.type === "safe" && hasKey(m);

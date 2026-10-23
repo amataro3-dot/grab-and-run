@@ -95,6 +95,11 @@ with sync_playwright() as p:
     check("捕まった" in b.inner_text("#hudC"), "B の画面に「捕まった！観戦中」")
     check(G(b, "G.me.bank") >= 10, "持ち出した点数は残る")
     check("1/2" in a.inner_text("#hudB"), "A の画面: 捕まえた 1/2人")
+    wait(a, 500)
+    check(len(get_at(gp + "/police") or {}) == 1, "誰かが捕まると警察が1人来る(3人なので上限1人)")
+    check(G(c, "G.police.length") == 1, "C の画面にも警察の情報が届く")
+    a.evaluate("GR.G.time = 50"); wait(a, 500)
+    check(len(get_at(gp + "/police")) == 1, "時間がたっても上限(人数−2)より増えない")
     b.screenshot(path=f"{SHOTS}/o3_caught.png")
 
     # ---------- 開き直し(C) ----------
@@ -128,9 +133,17 @@ with sync_playwright() as p:
     ph.disconnect("C"); wait(a, 600)
     check(G(a, "G.thieves.find(t => t.id === 'uid_C').out") is True, "C が切れたら脱落あつかい")
     check(get_at(gp + "/phase") == "play", "ほかの人がいるので試合は続く")
-    warp(b, 10.5, 15.5); wait(b, 300)
-    a.evaluate("GR.G.me.x = 10.5; GR.G.me.y = 15.9"); wait(a, 2500)
+    check(not get_at(gp + "/police"), "最初は警察なし")
+    a.evaluate("GR.G.time = 115"); wait(a, 600)
+    pol = get_at(gp + "/police") or {}
+    check(len(pol) == 1, "開始1分たつと警察が来る")
+    p0 = pol.get("p0", {"x": 9.5, "y": 24.5})
+    warp(b, p0["x"], p0["y"] - 0.3); wait(b, 1200)
+    check(get_at(gp + "/caught/uid_B") == "police", "警察に捕まる(ホストの画面で判定)")
+    check("捕まった" in b.inner_text("#hudC"), "B の画面に捕まったと出る")
+    wait(a, 1800)
     check(get_at(gp + "/why") == "allCaught" and "全員つかまった" in a.inner_text("#resTitle"), "泥棒が全員いなくなったら終わり")
+    check("(警察)" in a.inner_text("#resNote"), "結果に「(警察)」")
 
     # ---------- 3試合目: 店長(ホスト)が抜けたらロビーへ ----------
     a.click("#resLobby"); wait(a, 600); a.click("#lbStart"); wait(a, 700)
@@ -185,6 +198,11 @@ with sync_playwright() as p:
     d = ph.open("D")
     d.click("[data-role=thief][data-door=front]"); wait(d, 500)
     check(d.is_visible("#hud") and G(d, "G.online") is None and G(d, "G.thieves.length") == 2, "ひとりで練習が動く")
+    d.evaluate("GR.G.time = 115"); wait(d, 400)
+    check(G(d, "G.police.length") == 1, "練習でも1分たつと警察が来る")
+    d.screenshot(path=f"{SHOTS}/o7_practice_police.png")
+    d.evaluate("const p = GR.G.police[0]; GR.G.thieves[0].x = p.x; GR.G.thieves[0].y = p.y; GR.G.thieves[0].hidden = false"); wait(d, 300)
+    check(G(d, "G.thieves[0].out && G.thieves[0].byPolice") is True, "練習でも警察に捕まる")
     d.evaluate("GR.G.time = 0.1"); wait(d, 400)
     check(d.is_visible("#again") and not d.is_visible("#resLobby"), "練習の結果には「もう一度」")
 
