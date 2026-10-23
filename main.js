@@ -5,35 +5,37 @@
 "use strict";
 
 /* ---------- マップ ----------
-   # 壁   S 倉庫の棚   C 調理台・カウンター   T テーブル
+   # 壁   S 棚   C 調理台・机・カウンター   T テーブル
    H 隠れ場所(📦)   F 表の入り口   B 裏口   . 床
-   上から 倉庫 → 厨房(左)と事務所(右) → 客席 → 表の入り口 */
+   上: 冷蔵室(左)と倉庫 / 中: 厨房(左)・事務所(右上)・金庫室(右下) / 下: 客席 → 表の入り口
+   棚・調理台・机・仕切りのまわりは、ぐるぐる回って逃げられる */
 const MAP = [
-  "#######BB#########",
-  "#................#",
-  "#.SS..SS..SS..H..#",
-  "#.SS..SS..SS.....#",
-  "#................#",
-  "#.H..............#",
-  "####...######.####",
-  "#..........#.....#",
-  "#.CCCC.....#.....#",
-  "#..........#.....#",
-  "#.CCCC..H........#",
-  "#..........#.....#",
-  "#..H.......#..H..#",
-  "#####..##.########",
-  "#................#",
-  "#.TT..TT..TT..TT.#",
-  "#.TT..TT..TT..TT.#",
-  "#................#",
-  "#.H..............#",
-  "#.TT..TT..TT..TT.#",
-  "#.TT..TT..TT..TT.#",
-  "#..............H.#",
-  "#.CCCCC..........#",
-  "#................#",
-  "########FF########",
+  "########BB##########",
+  "#....#.............#",
+  "#.H..#..SSS...SSS..#",
+  "#....#..SSS...SSS..#",
+  "#.......SSS........#",
+  "#....#.........H...#",
+  "###.###..####.######",
+  "#.........#........#",
+  "#..H......#..CCCC..#",
+  "#..CCCCC.....CCCC..#",
+  "#..CCCCC..#........#",
+  "#.........#####.####",
+  "#...CC....#..H.....#",
+  "#...CC....#........#",
+  "####..#####.########",
+  "#..................#",
+  "#.TT..##..TT..##.H.#",
+  "#.TT..##..TT..##...#",
+  "#......##.....##...#",
+  "#..H...##..TT......#",
+  "#......##..TT..TT..#",
+  "#..TT..........TT..#",
+  "#..TT....H.........#",
+  "#.....CCCCCC.......#",
+  "#..................#",
+  "#########FF#########",
 ];
 const MW = MAP[0].length, MH = MAP.length;
 const SOLID = "#SCT";      // 通れないマス
@@ -42,6 +44,8 @@ const BLOCK_SIGHT = "#S";  // 向こうが見えないマス
 /* ---------- 品物(点数・重さ) ---------- */
 const ITEMS = {
   safe:   { name: "金庫",       emoji: "🔐", pts: 150, w: 8 },
+  loot:   { name: "金庫の中身", emoji: "💰", pts: 150, w: 2 }, // 鍵で金庫を開けると手に入る
+  key:    { name: "金庫の鍵",   emoji: "🔑", pts: 0,   w: 0 }, // 点数にはならない。出口に行っても手元に残る
   cash:   { name: "レジのお金", emoji: "💴", pts: 80,  w: 2 },
   meat:   { name: "高級肉",     emoji: "🥩", pts: 50,  w: 3 },
   wine:   { name: "ワイン",     emoji: "🍷", pts: 40,  w: 2 },
@@ -50,16 +54,17 @@ const ITEMS = {
 };
 // [種類, 列, 行]
 const ITEM_SPOTS = [
-  ["safe", 15, 8], ["cash", 13, 10],
-  ["meat", 3, 9], ["meat", 9, 7], ["cheese", 7, 11],
-  ["wine", 4, 2], ["wine", 12, 4], ["wine", 9, 1], ["cheese", 15, 4],
-  ["bread", 4, 14], ["bread", 12, 17], ["bread", 8, 21],
+  ["safe", 17, 13], ["cash", 12, 13], ["key", 3, 3],
+  ["meat", 2, 7], ["meat", 9, 12], ["cheese", 8, 7],
+  ["wine", 1, 1], ["wine", 12, 2], ["wine", 18, 4], ["cheese", 11, 5],
+  ["bread", 4, 15], ["bread", 12, 18], ["bread", 17, 24],
 ];
 const TOTAL_PTS = ITEM_SPOTS.reduce((s, [t]) => s + ITEMS[t].pts, 0);
+const GRAB_TIME = { safe: 1.2, open: 1.6 }; // 金庫を持ち上げる・開ける時間(ほかは GRAB_SEC)
 // 入り口のマス(入ってくる場所)
 const DOORS = {
-  front: [{ x: 8.5, y: MH - 0.5 }, { x: 9.5, y: MH - 0.5 }],
-  back:  [{ x: 7.5, y: 0.5 }, { x: 8.5, y: 0.5 }],
+  front: [{ x: 9.5, y: MH - 0.5 }, { x: 10.5, y: MH - 0.5 }],
+  back:  [{ x: 8.5, y: 0.5 }, { x: 9.5, y: 0.5 }],
 };
 
 /* ---------- 調整用の数字 ---------- */
@@ -68,11 +73,11 @@ const THIEF_SPEED = 4.2;      // 泥棒の速さ(マス/秒)
 const SLOW_PER_WEIGHT = 0.07; // 重さ1につき遅くなる割合
 const MIN_SPEED_RATE = 0.3;   // どれだけ持ってもこれより遅くならない
 const BOSS_PATROL = 3.2;      // CPU店長の見回りの速さ
-const BOSS_CHASE = 4.6;       // CPU店長が追いかける速さ
-const BOSS_CHASE_SEC = 5;     // CPU店長が追いかけ続けられる時間
+const BOSS_CHASE = 4.4;       // CPU店長が追いかける速さ
+const BOSS_CHASE_SEC = 4;     // CPU店長が追いかけ続けられる時間
 const BOSS_REST_SEC = 3;      // 追いかけたあと休む時間
 const BOSS_HUMAN = 4.8;       // 自分が店長のときの速さ
-const BOSS_SIGHT = 6;         // 店長の見える範囲
+const BOSS_SIGHT = 5;         // 店長の見える範囲
 const THIEF_SIGHT = 4.5;      // 泥棒の見える範囲
 const CPU_FLEE_DIST = 6;      // CPU泥棒が店長から逃げ始める距離
 const CATCH_DIST = 0.6;       // これより近づいたら捕まる
@@ -168,7 +173,7 @@ function newGame(role, door) {
   if (role === "thief") thieves[0].ai.wait = 0;
   G = {
     phase: "play", role, time: ROUND_SEC, items, thieves,
-    boss: { x: 6.5, y: 11.5, face: 1, cpu: role !== "boss", path: [], mode: "patrol", lastSeen: null, repath: 0, caught: 0 },
+    boss: { x: 8.5, y: 10.5, face: 1, cpu: role !== "boss", path: [], mode: "patrol", lastSeen: null, repath: 0, caught: 0 },
     popups: [],
   };
   $("start").classList.add("hidden"); $("result").classList.add("hidden");
@@ -178,6 +183,10 @@ function newGame(role, door) {
 
 const carryW = t => t.carry.reduce((s, k) => s + ITEMS[k].w, 0);
 const carryP = t => t.carry.reduce((s, k) => s + ITEMS[k].pts, 0);
+const hasKey = t => t.carry.includes("key");
+const loot = t => t.carry.filter(k => k !== "key"); // 出口で点数になる物(鍵以外)
+// 盗むのにかかる時間。金庫は重いので長め、鍵で開けるのはさらに長め
+const grabTime = (t, it) => it.type === "safe" ? (hasKey(t) ? GRAB_TIME.open : GRAB_TIME.safe) : GRAB_SEC;
 const speedRate = t => Math.max(MIN_SPEED_RATE, 1 - SLOW_PER_WEIGHT * carryW(t));
 const alive = () => G.thieves.filter(t => !t.out);
 function nearestItem(t) {
@@ -228,7 +237,7 @@ function startGrab() {
   const t = me();
   if (!t || t.out || G.phase !== "play") return;
   const it = nearestItem(t);
-  if (it) t.grab = { id: it.id, t: 0 };
+  if (it) t.grab = { id: it.id, t: 0, dur: grabTime(t, it) };
 }
 function stopGrab() { const t = me(); if (t) t.grab = null; }
 const grabBtn = $("grab");
@@ -260,7 +269,7 @@ function fleePath(t) {
     const c = { x: x + 0.5, y: y + 0.5 };
     let score = dist(c, b) - dp * 0.25;
     if (tileAt(x, y) === "H" && dist(c, b) > 1.5 && !canSee(b, c) && !others.some(o => tileOf(o)[0] === x && tileOf(o)[1] === y)) score += 6;
-    if (isDoor(x, y) && t.carry.length) score += 4;
+    if (isDoor(x, y) && loot(t).length) score += 4;
     if (score > bestScore && dp > 0) { bestScore = score; best = key(x, y); }
     if (dp >= 7) continue;
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -304,7 +313,7 @@ function cpuThief(t, dt) {
   if (ai.mode === "think") {
     ai.path = [];
     const timeUp = G.time < 25;
-    if (t.carry.length && (carryW(t) >= ai.greed || !G.items.some(i => !i.claim) || timeUp)) {
+    if (loot(t).length && (carryW(t) >= ai.greed || !G.items.some(i => !i.claim && i.type !== "key") || timeUp)) {
       ai.mode = "exit"; ai.path = bestDoorPath(t);
     } else {
       // 近くて高い品物をねらう
@@ -315,11 +324,15 @@ function cpuThief(t, dt) {
         if (dist(it, b) < 2.5) continue; // 店長のすぐ近くの品物はあきらめる
         const p = findPath(tx, ty, Math.floor(it.x), Math.floor(it.y), true);
         if (!p) continue;
-        const s = p.length - ITEMS[it.type].pts / 12 + (carryW(t) + ITEMS[it.type].w > 9 ? 20 : 0);
+        // 鍵は金庫が残っているときだけ価値がある。鍵を持っていれば金庫は軽い
+        let pts = ITEMS[it.type].pts, w = ITEMS[it.type].w;
+        if (it.type === "key") { if (hasKey(t) || !G.items.some(i => i.type === "safe")) continue; pts = 70; }
+        if (it.type === "safe" && hasKey(t)) w = ITEMS.loot.w;
+        const s = p.length - pts / 12 + (carryW(t) + w > 9 ? 20 : 0);
         if (s < bs) { bs = s; best = it; bp = p; }
       }
       if (best) { ai.mode = "steal"; ai.target = best; best.claim = t; ai.path = bp; }
-      else if (t.carry.length) { ai.mode = "exit"; ai.path = bestDoorPath(t); }
+      else if (loot(t).length) { ai.mode = "exit"; ai.path = bestDoorPath(t); }
       else { ai.mode = "idle"; ai.wait = 1; ai.mode = "think"; }
     }
   }
@@ -328,7 +341,7 @@ function cpuThief(t, dt) {
     const it = ai.target;
     if (!it || !G.items.includes(it)) { ai.mode = "think"; ai.target = null; return; }
     if (!ai.path.length && dist(t, it) <= GRAB_RANGE) {
-      if (!t.grab) t.grab = { id: it.id, t: 0 };
+      if (!t.grab) t.grab = { id: it.id, t: 0, dur: grabTime(t, it) };
       return;
     }
     if (!ai.path.length) { ai.mode = "think"; return; }
@@ -387,10 +400,17 @@ function update(dt) {
     if (t.grab) {
       const it = G.items.find(i => i.id === t.grab.id);
       if (!it || dist(t, it) > GRAB_RANGE) t.grab = null;
-      else if ((t.grab.t += dt) >= GRAB_SEC) {
-        t.carry.push(it.type);
+      else if ((t.grab.t += dt) >= t.grab.dur) {
+        if (it.type === "safe" && hasKey(t)) {
+          // 鍵を使って、金庫の中身だけ持っていく(鍵はなくなる)
+          t.carry.splice(t.carry.indexOf("key"), 1);
+          t.carry.push("loot");
+          popup(t, "💰 金庫を開けた!");
+        } else {
+          t.carry.push(it.type);
+          popup(t, ITEMS[it.type].emoji + " GET!");
+        }
         G.items = G.items.filter(i => i !== it);
-        popup(t, ITEMS[it.type].emoji + " GET!");
         t.grab = null;
         if (t.cpu) { t.ai.mode = "think"; t.ai.target = null; }
       }
@@ -401,9 +421,9 @@ function update(dt) {
     const [tx, ty] = tileOf(t);
     t.hidden = tileAt(tx, ty) === "H" && !t.grab;
     // 出口に着いたら、手持ちが点数になる
-    if (isDoor(tx, ty) && t.carry.length) {
+    if (isDoor(tx, ty) && loot(t).length) {
       const p = carryP(t);
-      t.bank += p; t.carry = [];
+      t.bank += p; t.carry = hasKey(t) ? ["key"] : [];
       popup(t, "+" + p + "点!");
       if (t.cpu) { t.ai.greed = rand(3, 7); t.ai.mode = "think"; t.ai.wait = rand(0.3, 1); }
     }
@@ -432,7 +452,7 @@ function update(dt) {
   G.popups = G.popups.filter(p => p.t < 1.2);
 
   if (!alive().length) return finish("allCaught");
-  if (!G.items.length && alive().every(t => !t.carry.length)) return finish("clear");
+  if (G.items.every(i => i.type === "key") && alive().every(t => !loot(t).length)) return finish("clear");
 }
 
 function popup(at, text) { G.popups.push({ x: at.x, y: at.y, text, t: 0 }); }
@@ -468,9 +488,10 @@ addEventListener("resize", resize); resize();
 
 function floorColor(x, y) {
   const odd = (x + y) % 2;
+  if (y <= 5 && x <= 5) return odd ? "#3a525c" : "#3f5963";             // 冷蔵室
   if (y <= 5) return odd ? "#4a4744" : "#504d49";                       // 倉庫(コンクリ)
-  if (y <= 12 && x >= 12) return odd ? "#5a4636" : "#614b3a";           // 事務所(木)
-  if (y <= 12) return odd ? "#87909a" : "#929ba4";                      // 厨房(タイル)
+  if (y <= 13 && x >= 11) return odd ? "#5a4636" : "#614b3a";           // 事務所・金庫室(木)
+  if (y <= 13) return odd ? "#87909a" : "#929ba4";                      // 厨房(タイル)
   return odd ? "#7a5636" : "#825c3a";                                   // 客席(木)
 }
 
@@ -506,15 +527,15 @@ function draw() {
     if (c === "#") { ctx.fillStyle = "#2a2230"; ctx.fillRect(px, py, T + 1, T + 1); continue; }
     ctx.fillStyle = floorColor(x, y); ctx.fillRect(px, py, T + 1, T + 1);
     if (c === "S") { ctx.fillStyle = "#7a5a3c"; ctx.fillRect(px + 2, py + 2, T - 4, T - 4); ctx.fillStyle = "#5e4630"; for (let i = 1; i < 3; i++) ctx.fillRect(px + 2, py + i * T / 3, T - 4, 3); }
-    else if (c === "C") { ctx.fillStyle = "#8d969e"; ctx.fillRect(px + 1, py + 3, T - 2, T - 6); ctx.fillStyle = "#a7b0b8"; ctx.fillRect(px + 1, py + 3, T - 2, 5); }
+    else if (c === "C") { ctx.fillStyle = "#4e5862"; ctx.fillRect(px + 1, py + 3, T - 2, T - 6); ctx.fillStyle = "#6b7782"; ctx.fillRect(px + 1, py + 3, T - 2, 5); }
     else if (c === "T") { ctx.fillStyle = "#a0522d"; ctx.beginPath(); ctx.arc(px + T / 2, py + T / 2, T * 0.42, 0, 7); ctx.fill(); }
     else if (c === "H") { ctx.fillStyle = "#c8a165"; ctx.fillRect(px + T * 0.1, py + T * 0.15, T * 0.8, T * 0.7); ctx.strokeStyle = "#8a6a3a"; ctx.lineWidth = 2; ctx.strokeRect(px + T * 0.1, py + T * 0.15, T * 0.8, T * 0.7); ctx.beginPath(); ctx.moveTo(px + T * 0.5, py + T * 0.15); ctx.lineTo(px + T * 0.5, py + T * 0.85); ctx.stroke(); }
     else if (c === "F" || c === "B") { ctx.fillStyle = "#2f8f55"; ctx.fillRect(px, py, T + 1, T + 1); }
   }
   // 出口の文字
   ctx.fillStyle = "#fff"; ctx.font = `700 ${T * 0.36}px sans-serif`;
-  ctx.fillText("表の入り口", 9 * T, (MH - 0.5) * T);
-  ctx.fillText("裏口", 8 * T, 0.5 * T);
+  ctx.fillText("表の入り口", 10 * T, (MH - 0.5) * T);
+  ctx.fillText("裏口", 9 * T, 0.5 * T);
 
   // 品物
   ctx.font = `${T * 0.62}px sans-serif`;
@@ -537,7 +558,7 @@ function draw() {
     }
     if (t.grab) {
       ctx.strokeStyle = THIEF_COLORS[t.i]; ctx.lineWidth = 4;
-      ctx.beginPath(); ctx.arc(t.x * T, t.y * T, R * T + 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * t.grab.t / GRAB_SEC); ctx.stroke();
+      ctx.beginPath(); ctx.arc(t.x * T, t.y * T, R * T + 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * t.grab.t / t.grab.dur); ctx.stroke();
     }
     if (t.cpu && !isBoss) { ctx.fillStyle = "#fff"; ctx.font = `700 ${T * 0.24}px sans-serif`; ctx.fillText("仲間", t.x * T, (t.y + 0.58) * T); }
     ctx.globalAlpha = 1;
@@ -595,7 +616,10 @@ function updateHud() {
       d = `足の速さ ${Math.round(speedRate(m) * 100)}%`;
       const it = nearestItem(m);
       canGrab = !!it || !!m.grab;
-      label = m.grab ? "盗んでる…" : it ? `${ITEMS[it.type].emoji} ${ITEMS[it.type].name}<br>${ITEMS[it.type].pts}点` : "盗む";
+      const opening = it && it.type === "safe" && hasKey(m);
+      label = m.grab ? (opening ? "開けてる…" : "盗んでる…")
+        : opening ? `🔑 金庫を開ける<br>150点`
+        : it ? `${ITEMS[it.type].emoji} ${ITEMS[it.type].name}<br>${it.type === "key" ? "金庫が開く" : ITEMS[it.type].pts + "点"}` : "盗む";
     }
   }
   const hud = [time, a, b, c, d, label, canGrab].join("|");
@@ -616,7 +640,7 @@ function loop(now) {
   draw();
   updateHud();
   const m = me();
-  $("grabRing").style.height = m && m.grab ? (m.grab.t / GRAB_SEC * 100) + "%" : "0%";
+  $("grabRing").style.height = m && m.grab ? (m.grab.t / m.grab.dur * 100) + "%" : "0%";
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
