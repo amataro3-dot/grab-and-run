@@ -505,6 +505,43 @@ with sync_playwright() as p:
     d.evaluate("GR.G.time = 0.1"); wait(d, 400)
     check(d.is_visible("#again") and not d.is_visible("#resLobby"), "練習の結果には「もう一度」")
 
+    # ---------- 開いた扉は壁(練習) ----------
+    dr = ph.open("DR")
+    dr.click("[data-role=thief]"); dr.click("[data-enter=front]"); wait(dr, 300)
+    dr.evaluate("GR.G.traps = []; GR.G.boss.cpu = false; GR.G.boss.x = 18.5; GR.G.boss.y = 24.5; GR.G.thieves[1].ai.wait = 99; GR.G.thieves[1].x = 1.5; GR.G.thieves[1].y = 20.5")
+    T0 = "GR.G.thieves[0]"
+    dr.evaluate(f"{T0}.x = 13.5; {T0}.y = 7.5"); wait(dr, 100)
+    check(dr.evaluate(f"doLocker({T0}, 'open'), GR.G.lockers[3].wall") is False, "開けている途中はぶつからない")
+    wait(dr, 300)
+    check(G(dr, "G.lockers[3].wall") is True and dr.evaluate("doorBetween(13, 7, 12, 7) === GR.G.lockers[3]"), "開ききると扉が壁になる(前のマスと左のマスの間)")
+    dr.keyboard.down("ArrowLeft"); wait(dr, 500); dr.keyboard.up("ArrowLeft")
+    check(G(dr, "G.thieves[0].x") > 13.2, f"開いた扉は通れない(x={G(dr, 'G.thieves[0].x'):.2f})")
+    dr.screenshot(path=f"{SHOTS}/o15_door_wall.png")
+    dr.evaluate(f"{T0}.x = 12.5; {T0}.y = 7.5"); wait(dr, 200)
+    check(dr.evaluate("[...document.querySelectorAll('#act .act-btn')].map(b => b.dataset.act).join()") == "close", "扉の裏側(横のマス)からでも「閉める」ボタン")
+    dr.locator("#act .act-btn[data-act=close]").dispatch_event("pointerdown"); wait(dr, 50)
+    check(G(dr, "G.lockers[3].open") is False and G(dr, "G.lockers[3].wall") is False, "裏側から閉められる。閉めはじめたらすぐ通れる")
+    dr.keyboard.down("ArrowRight"); wait(dr, 400); dr.keyboard.up("ArrowRight")
+    check(G(dr, "G.thieves[0].x") > 13.2, "閉めたら通れる")
+    dr.evaluate(f"{T0}.x = 13.05; {T0}.y = 7.5; doLocker({T0}, 'open')"); wait(dr, 400)
+    check(G(dr, "G.lockers[3].wall") is False, "扉のところに人がいる間は壁にならない(はさまらない)")
+    dr.evaluate(f"{T0}.x = 13.6"); wait(dr, 200)
+    check(G(dr, "G.lockers[3].wall") is True, "どいたら壁になる")
+    # CPU店長は、道をふさぐ扉を閉めて進む
+    dr.evaluate(f"""{T0}.x = 1.5; {T0}.y = 15.5; const L = GR.G.lockers[4]; L.open = true;
+      const b = GR.G.boss; b.cpu = true; b.x = 11.5; b.y = 7.5; b.mode = 'patrol'; b.check = null; b.repath = 99; b.path = findPath(11, 7, 16, 7, false, true)""")
+    try: dr.wait_for_function("GR.G.boss.x > 14.4", timeout=4000)
+    except Exception: pass
+    check(G(dr, "G.boss.x") > 14.4 and G(dr, "G.lockers[3].open") is False and G(dr, "G.lockers[4].open") is False, "CPU店長は道をふさぐ扉を閉めて進む")
+    # 警察も閉める
+    check(dr.evaluate("(() => { const L = GR.G.lockers[3]; L.open = true; const p = makePolice('px', 13.5, 7.5); p.path = [{ x: 12.5, y: 7.5 }]; closeDoorAhead(p); return L.open; })()") is False, "警察も道をふさぐ扉を閉める")
+    # CPU泥棒は、追ってくる相手との間を扉でふさぐ
+    blocked_ok = dr.evaluate("""(() => { const t = GR.G.thieves[1], b = GR.G.boss, L = GR.G.lockers[4]; L.open = false;
+      t.x = 14.5; t.y = 7.5; t.ai.blockT = 0; t.ai.path = [{ x: 15.5, y: 7.5 }]; b.x = 11.5; b.y = 7.5;
+      tryBlock(t, b, 0.1); const ok = L.open; L.open = false; t.ai.blockT = 0; t.ai.path = [{ x: 13.5, y: 7.5 }]; tryBlock(t, b, 0.1);
+      return ok && !L.open; })()""")
+    check(blocked_ok is True, "CPU泥棒は逃げるとき、扉を開けて追ってくる相手との間をふさぐ(自分の行き先はふさがない)")
+
     # ---------- CPUとロッカー(練習) ----------
     cp = ph.open("CP")
     cp.click("[data-role=boss]"); wait(cp, 300); cp.click("#prepOk"); wait(cp, 200)

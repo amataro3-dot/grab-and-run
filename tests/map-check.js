@@ -68,6 +68,10 @@ for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
   lockers++;
   const fx = x + d[0], fy = y + d[1];
   if (tileAt(fx, fy) !== ".") fail(`ロッカー(列${x} 行${y})の扉の前(列${fx} 行${fy})が床じゃない`);
+  // 開いた扉は「前のマス」と「横のマス」の間の壁になる。横のマスは壁じゃない側(main.js と同じ決め方)
+  let px = d[1], py = -d[0];
+  if (SOLID.includes(tileAt(fx + px, fy + py))) { px = -px; py = -py; }
+  if (SOLID.includes(tileAt(fx + px, fy + py))) fail(`ロッカー(列${x} 行${y})の扉が開ける側がない(両どなりが壁や家具)`);
   else if (!seen.has(fx + "," + fy)) fail(`ロッカー(列${x} 行${y})の扉の前に行けない`);
 }
 

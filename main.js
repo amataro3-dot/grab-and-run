@@ -43,10 +43,21 @@ const LOCKER_DIRS = { "^": [0, -1], "v": [0, 1], "<": [-1, 0], ">": [1, 0] }; //
 const SOLID = "#SCT^v<>";  // 通れないマス
 const BLOCK_SIGHT = "#S";  // 向こうが見えないマス
 // ロッカーの一覧。id は L0, L1 …(上の行から順番)。fx, fy = 扉の前のマス(ここに立つと開け閉めできる)
+// 扉は前の辺の片はし(px, py の側)にちょうつがいがあり、開くと「前のマス」と「横のマス(sx, sy)」の間の壁になる。
+// ちょうつがいは、横のマスが壁でない側にする(ふさげる意味があるように)。r = 開いた扉の当たり判定(細長い四角)
+const DOOR_W = 0.06;
 const LOCKERS = [];
 for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
   const d = LOCKER_DIRS[MAP[y][x]];
-  if (d) LOCKERS.push({ id: "L" + LOCKERS.length, x, y, dx: d[0], dy: d[1], fx: x + d[0], fy: y + d[1] });
+  if (!d) continue;
+  const fx = x + d[0], fy = y + d[1];
+  let px = d[1], py = -d[0];
+  if (SOLID.includes((MAP[fy + py] || "#")[fx + px] || "#")) { px = -px; py = -py; }
+  const hx = x + 0.5 + (d[0] + px) * 0.5, hy = y + 0.5 + (d[1] + py) * 0.5; // ちょうつがい
+  const ex = hx + d[0], ey = hy + d[1];                                     // 開いた扉の先
+  const r = px ? { x1: hx - DOOR_W, x2: hx + DOOR_W, y1: Math.min(hy, ey), y2: Math.max(hy, ey) }
+               : { x1: Math.min(hx, ex), x2: Math.max(hx, ex), y1: hy - DOOR_W, y2: hy + DOOR_W };
+  LOCKERS.push({ id: "L" + LOCKERS.length, x, y, dx: d[0], dy: d[1], fx, fy, px, py, sx: fx + px, sy: fy + py, hx, hy, r });
 }
 
 /* ---------- 品物(点数・重さ) ---------- */
@@ -86,11 +97,13 @@ const BOSS_CHASE_SEC = 4;     // CPU店長が追いかけ続けられる時間
 const BOSS_REST_SEC = 3;      // 追いかけたあと休む時間
 const BOSS_HUMAN = 4.8;       // 自分が店長のときの速さ
 const BOSS_CHECK_RATE = 0.3;  // CPU店長が見回りのとき、近くのロッカーを調べに行く割合
+const BOSS_CHECK_PAUSE = 0.6; // CPU店長がロッカーを開けたあと、中を見て止まっている時間
 const BOSS_CHECK_NEAR = 3;    // CPU店長が泥棒を見失った場所から、このマス以内のロッカーを調べる
 const BOSS_SIGHT = 5;         // 店長の見える範囲
 const THIEF_SIGHT = 4.5;      // 泥棒の見える範囲
 const CPU_FLEE_DIST = 6;      // CPU泥棒が店長から逃げ始める距離
 const CPU_LOCKER_STEP = 0.2;  // CPU泥棒がロッカーを開ける・入る・閉めるの間の時間
+const CPU_BLOCK_DIST = 7;     // CPU泥棒が扉でふさぐのは、追ってくる相手がこれより近いとき
 const CATCH_DIST = 0.6;       // これより近づいたら捕まる
 const GRAB_SEC = 0.8;         // 盗むのにかかる長押しの時間
 const GRAB_RANGE = 0.9;       // 盗める距離
@@ -122,7 +135,15 @@ function blocked(x, y) {
   for (let ty = Math.floor(y - R); ty <= Math.floor(y + R); ty++)
     for (let tx = Math.floor(x - R); tx <= Math.floor(x + R); tx++)
       if (isSolid(tx, ty)) return true;
-  return false;
+  // 開ききったロッカーの扉も壁
+  return !!(G && G.lockers && G.lockers.some(l => l.wall && touchRect(x, y, l.r)));
+}
+const touchRect = (x, y, r) => x + R > r.x1 && x - R < r.x2 && y + R > r.y1 && y - R < r.y2;
+// マス a と b の間に、開いたロッカーの扉があるか(あればそのロッカー)
+function doorBetween(ax, ay, bx, by) {
+  if (!G || !G.lockers) return null;
+  return G.lockers.find(l => l.open &&
+    ((l.fx === ax && l.fy === ay && l.sx === bx && l.sy === by) || (l.fx === bx && l.fy === by && l.sx === ax && l.sy === ay))) || null;
 }
 // 壁にぶつかったら、ぶつからない向きだけ動く(壁ぞいにすべる)
 function moveBy(e, dx, dy) {
@@ -143,7 +164,8 @@ function canSee(a, b) {
   return true;
 }
 // マス目で最短ルートを探す。泥棒は入り口も通れる、店長は通れない
-function findPath(sx, sy, gx, gy, canDoor) {
+// throughDoors = 開いたロッカーの扉も通れることにする(店長・警察は、扉の前で閉めて進む)
+function findPath(sx, sy, gx, gy, canDoor, throughDoors) {
   const key = (x, y) => y * MW + x;
   const prev = new Map([[key(sx, sy), -1]]);
   const q = [[sx, sy]];
@@ -153,6 +175,7 @@ function findPath(sx, sy, gx, gy, canDoor) {
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       const nx = x + dx, ny = y + dy, k = key(nx, ny);
       if (isSolid(nx, ny) || (!canDoor && isDoor(nx, ny)) || prev.has(k)) continue;
+      if (!throughDoors && doorBetween(x, y, nx, ny)) continue;
       prev.set(k, key(x, y)); q.push([nx, ny]);
     }
   }
@@ -483,7 +506,7 @@ function fleePath(t, b) {
     if (dp >= 7) continue;
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       const nx = x + dx, ny = y + dy, k = key(nx, ny);
-      if (isSolid(nx, ny) || prev.has(k)) continue;
+      if (isSolid(nx, ny) || prev.has(k) || doorBetween(x, y, nx, ny)) continue;
       if (dist({ x: nx + 0.5, y: ny + 0.5 }, b) < 1.2) continue; // 店長のすぐ横は通らない
       prev.set(k, key(x, y)); depth.set(k, dp + 1); q.push([nx, ny]);
     }
@@ -580,7 +603,29 @@ function cpuThief(t, dt) {
     else if (!danger) ai.mode = "think";
   }
 
+  if (ai.mode === "flee") tryBlock(t, b, dt);
+  // 行く道を扉にふさがれたら、考えなおす
+  const [cx, cy] = tileOf(t), wp = ai.path.find(w => Math.floor(w.x) !== cx || Math.floor(w.y) !== cy);
+  if (wp && doorBetween(cx, cy, Math.floor(wp.x), Math.floor(wp.y))) {
+    ai.path = [];
+    if (ai.mode === "flee") ai.repath = 0;
+    else { if (ai.target) { ai.target.claim = null; ai.target = null; } ai.mode = "think"; }
+    return;
+  }
   if (ai.path.length) followPath(t, ai.path, THIEF_SPEED * speedRate(t), dt);
+}
+// 逃げている CPU泥棒: ロッカーの前を通ったとき、追ってくる相手が扉の向こう側にいたら扉を開けてふさぐ
+function tryBlock(t, b, dt) {
+  const ai = t.ai;
+  if ((ai.blockT = (ai.blockT || 0) - dt) > 0) return;
+  const [tx, ty] = tileOf(t), l = lockerAt(tx, ty);
+  if (!l || l.open || occupant(l) || dist(t, b) > CPU_BLOCK_DIST) return;
+  // 相手が横のマスの方(扉が開く側)にいるか
+  if ((b.x - tx - 0.5) * l.px + (b.y - ty - 0.5) * l.py < 0.6) return;
+  // 自分の行き先が扉の向こうなら開けない
+  const nx = ai.path.length ? Math.floor(ai.path[0].x) : tx, ny = ai.path.length ? Math.floor(ai.path[0].y) : ty;
+  if (nx === l.sx && ny === l.sy) return;
+  if (doLocker(t, "open")) ai.blockT = 2;
 }
 
 /* ---------- CPUの店長 ---------- */
@@ -606,8 +651,9 @@ function cpuBoss(dt) {
   const [bx0, by0] = tileOf(b);
   if (b.check && !target && b.check.fx === bx0 && b.check.fy === by0) {
     if (!b.check.open) doLocker(b, "open");
-    b.check = null; b.path = [];
+    b.check = null; b.path = []; b.pause = BOSS_CHECK_PAUSE; // 開けたら少し中を見る
   }
+  if (b.pause > 0 && !target) { b.pause -= dt; return; }
   b.repath -= dt;
   if (b.repath <= 0 || !b.path.length) {
     b.repath = 0.3;
@@ -628,10 +674,11 @@ function cpuBoss(dt) {
       if (near && near.length) { b.check = near[Math.floor(Math.random() * Math.min(3, near.length))]; goal = [b.check.fx, b.check.fy]; }
       else goal = FLOORS[Math.floor(Math.random() * FLOORS.length)];
     }
-    if (goal) b.path = findPath(bx, by, goal[0], goal[1], false) || [];
+    if (goal) b.path = findPath(bx, by, goal[0], goal[1], false, true) || [];
     if (!b.path.length && b.mode === "chase" && !target) { b.mode = "patrol"; b.lastSeen = null; }
     if (!b.path.length && b.check && !(b.check.fx === bx && b.check.fy === by)) b.check = null; // 行けないロッカーはあきらめる
   }
+  closeDoorAhead(b);
   followPath(b, b.path, b.mode === "chase" ? BOSS_CHASE : BOSS_PATROL, dt);
 }
 // 近くの閉まったロッカー(近い順)
@@ -679,9 +726,10 @@ function policeStep(p, dt, catchDist, onCatch) {
       if (goal[0] === px && goal[1] === py && !target) { p.mode = "patrol"; p.lastSeen = null; goal = null; }
     }
     if (!goal && !p.path.length) goal = POLICE_FLOORS[Math.floor(Math.random() * POLICE_FLOORS.length)];
-    if (goal) p.path = findPath(px, py, goal[0], goal[1], false) || [];
+    if (goal) p.path = findPath(px, py, goal[0], goal[1], false, true) || [];
     if (!p.path.length && p.mode === "chase" && !target) { p.mode = "patrol"; p.lastSeen = null; }
   }
+  closeDoorAhead(p);
   followPath(p, p.path, p.mode === "chase" ? POLICE_CHASE : POLICE_PATROL, dt);
   for (const t of alive()) {
     const [tx, ty] = tileOf(t);
@@ -809,7 +857,7 @@ function checkSpot(t) {
    警察は開けない。1つのロッカーに入れるのは1人 */
 const LOCKER_HOLD = 0.8; // 自分で開け閉めしたあと、この秒数はネットの古い情報で上書きしない
 const LOCKER_LABEL = { open: "開ける", close: "閉める", enter: "入る", exit: "出る" };
-function makeLockers() { return LOCKERS.map(l => ({ ...l, open: false, who: null, anim: 0, hold: 0 })); }
+function makeLockers() { return LOCKERS.map(l => ({ ...l, open: false, who: null, anim: 0, hold: 0, wall: false })); }
 const lockerAt = (tx, ty) => G.lockers.find(l => l.fx === tx && l.fy === ty); // その場所が扉の前のロッカー
 const lockerOf = t => !!(G && G.lockers && t) && G.lockers.find(l => l.who === t.id) || null; // t が入っているロッカー
 // 中にいる泥棒(捕まった人・いなくなった人は数えない)
@@ -832,30 +880,57 @@ function lockerActions(e) {
   const isBoss = e === G.boss, inside = !isBoss && lockerOf(e);
   if (inside) return inside.open ? ["close", "exit"] : ["open"];
   if (e.stun > 0 || e.slip || e.grab) return [];
-  const l = lockerAt(...tileOf(e));
-  if (!l) return [];
-  if (!l.open) return ["open"];
-  if (isBoss || occupant(l)) return ["close"];
-  return ["enter", "close"];
+  const [tx, ty] = tileOf(e), l = lockerAt(tx, ty), acts = [];
+  if (l) {
+    if (!l.open) acts.push("open");
+    else if (isBoss || occupant(l)) acts.push("close");
+    else acts.push("enter", "close");
+  }
+  // 横のマス(扉の裏側)からでも、開いた扉は閉められる
+  if (!acts.includes("close") && sideDoors(tx, ty).length) acts.push("close");
+  return acts;
 }
+const sideDoors = (tx, ty) => G.lockers.filter(l => l.open && l.sx === tx && l.sy === ty);
 // 開ける・閉める・入る・出る。できたら true
 function doLocker(e, act) {
   if (!lockerActions(e).includes(act)) return false;
-  const l = (e !== G.boss && lockerOf(e)) || lockerAt(...tileOf(e));
-  if (act === "open") l.open = true;
-  if (act === "close") l.open = false;
+  const [tx, ty] = tileOf(e), inside = e !== G.boss && lockerOf(e), l = inside || lockerAt(tx, ty);
+  if (act === "close") {
+    // 自分のマスにふれている開いた扉を、ぜんぶ閉める(中にいるときは自分のロッカーだけ)
+    for (const k of inside ? [inside] : [l, ...sideDoors(tx, ty)]) if (k && k.open) setDoor(k, false, e);
+    return true;
+  }
+  if (act === "open") return setDoor(l, true, e), true;
   if (act === "enter") { l.who = e.id; e.x = l.x + 0.5; e.y = l.y + 0.5; e.grab = null; }
   if (act === "exit") { l.who = null; e.x = l.fx + 0.5; e.y = l.fy + 0.5; }
   l.hold = LOCKER_HOLD;
   if (G.online) G.hooks.locker(l, act, e);
   return true;
 }
+// 扉を開ける・閉める(閉めはじめたら、すぐ壁ではなくなる)
+function setDoor(l, open, e) {
+  l.open = open; l.hold = LOCKER_HOLD;
+  if (!open) l.wall = false;
+  if (G.online) G.hooks.locker(l, open ? "open" : "close", e);
+}
+// CPU店長・警察: 次に進むマスとの間に開いた扉があれば閉める(どちら側からでも閉められる)
+function closeDoorAhead(e) {
+  const [cx, cy] = tileOf(e);
+  const wp = e.path.find(w => Math.floor(w.x) !== cx || Math.floor(w.y) !== cy);
+  if (!wp) return;
+  const l = doorBetween(cx, cy, Math.floor(wp.x), Math.floor(wp.y));
+  if (l) setDoor(l, false, e);
+}
 // 捕まった泥棒はロッカーから出す(扉は開いたまま)
 function releaseLocker(t) { const l = lockerOf(t); if (l) { l.who = null; l.open = true; } }
 function updateLockers(dt) {
+  const who = [G.boss, ...(G.police || []), ...G.thieves.filter(t => t.in && !t.out && !lockerOf(t))];
   for (const l of G.lockers) {
     l.hold = Math.max(0, l.hold - dt);
     l.anim = Math.max(0, Math.min(1, l.anim + (l.open ? dt : -dt) * 8)); // パタンとすぐ開く・閉まる
+    // 開ききったら壁になる(開け閉めの途中はぶつからない。扉のところに人がいたら、どいてから)
+    if (!l.open) l.wall = false;
+    else if (!l.wall && l.anim >= 1 && !who.some(e => touchRect(e.x, e.y, l.r))) l.wall = true;
   }
 }
 
@@ -1223,10 +1298,10 @@ function drawLockers(x0, x1, y0, y1) {
       }
     }
     // 扉: 表の辺の片はしがちょうつがい。開くほど外へ回る
-    const h = T / 2 - m, ux = -l.dy, uy = l.dx;
-    const hx = cx + l.dx * h - ux * h, hy = cy + l.dy * h - uy * h; // ちょうつがい
-    const a = l.anim * 1.75, len = T - m * 2;
-    const ex = hx + (ux * Math.cos(a) + l.dx * Math.sin(a)) * len, ey = hy + (uy * Math.cos(a) + l.dy * Math.sin(a)) * len;
+    // 閉まっているときは前の辺にそって、開くと外へ90度まわって「前のマス」と「横のマス」の間の壁になる
+    const hx = l.hx * T, hy = l.hy * T; // ちょうつがい
+    const a = l.anim * Math.PI / 2, len = T;
+    const ex = hx + (-l.px * Math.cos(a) + l.dx * Math.sin(a)) * len, ey = hy + (-l.py * Math.cos(a) + l.dy * Math.sin(a)) * len;
     ctx.strokeStyle = "#8fb0cc"; ctx.lineWidth = Math.max(3, T * 0.1); ctx.lineCap = "round";
     ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(ex, ey); ctx.stroke();
     ctx.lineCap = "butt";
