@@ -311,7 +311,7 @@ function beginPlay() {
   G.phase = "play"; joy = null; lastHud = "";
   $("prep").classList.add("hidden");
   $("hud").classList.remove("hidden");
-  $("grab").classList.toggle("hidden", G.role !== "thief");
+  $("grab").classList.remove("hidden");
   if (G.online && G.role === "thief" && G.me.door && !G.me.in) enterAt(G.me, G.me.door);
   renderShop();
 }
@@ -443,32 +443,29 @@ function startGrab() {
 }
 // 長押しをやめたら中止(オンラインで「取れたか」の返事を待っている間は中止しない)
 function stopGrab() { const t = me(); if (t && !(t.grab && t.grab.wait)) t.grab = null; }
+// 右下の大きいボタン(盗む / ロッカーを開ける・閉める)。店長はロッカーだけ
 const grabBtn = $("grab");
-grabBtn.addEventListener("pointerdown", e => { e.preventDefault(); startGrab(); });
-for (const ev of ["pointerup", "pointercancel", "pointerleave"]) grabBtn.addEventListener(ev, stopGrab);
-addEventListener("keydown", e => { if (e.key === " " && me() && !me().grab) startGrab(); });
-addEventListener("keyup", e => { if (e.key === " ") stopGrab(); });
-
-// ロッカーのボタン(扉の前か中にいるときだけ出る)。キーボードは E が1つ目、Q が2つ目
 const actor = () => !G ? null : G.role === "boss" ? (G.boss.cpu ? null : G.boss) : me();
-function renderAct() {
-  const box = $("act"), e = actor(), acts = e ? lockerActions(e) : [];
-  box.classList.toggle("hidden", !acts.length);
-  box.classList.toggle("boss", !!(G && G.role === "boss"));
-  const key = acts.join(",");
-  if (box.dataset.key === key) return;
-  box.dataset.key = key; box.textContent = "";
-  for (const a of acts) {
-    const b = document.createElement("button");
-    b.className = "act-btn"; b.dataset.act = a; b.innerHTML = `🗄️<br>${LOCKER_LABEL[a]}`;
-    b.addEventListener("pointerdown", ev => { ev.preventDefault(); const who = actor(); if (who) doLocker(who, a); });
-    box.append(b);
-  }
+// ボタンで押せるロッカーの操作("open" か "close")。入る・出るはスティックで歩いて
+function btnLocker(e) { return lockerActions(e).find(a => a === "open" || a === "close") || null; }
+// 今ボタンを押したら何をするか: { locker: "open" / "close" } か { grab: true } か null
+// 泥棒は、ロッカーの中ならロッカー、近くに品物があれば盗む(優先)、なければロッカー
+function btnMode() {
+  const e = actor();
+  if (!e || !G || G.phase !== "play") return null;
+  if (e !== G.boss && !lockerOf(e) && (e.grab || nearestItem(e))) return { grab: true };
+  const a = btnLocker(e);
+  return a ? { locker: a } : null;
 }
-addEventListener("keydown", e => {
-  const k = e.key.toLowerCase(), who = actor();
-  if ((k === "e" || k === "q") && who && !e.repeat) { const a = lockerActions(who)[k === "e" ? 0 : 1]; if (a) doLocker(who, a); }
-});
+function pressBtn() {
+  const m = btnMode();
+  if (m && m.locker) doLocker(actor(), m.locker); // ロッカーは1回タップ
+  else if (m && m.grab) startGrab();              // 盗むは長押し
+}
+grabBtn.addEventListener("pointerdown", e => { e.preventDefault(); pressBtn(); });
+for (const ev of ["pointerup", "pointercancel", "pointerleave"]) grabBtn.addEventListener(ev, stopGrab);
+addEventListener("keydown", e => { if ((e.key === " " || e.key.toLowerCase() === "e") && !e.repeat) pressBtn(); });
+addEventListener("keyup", e => { if (e.key === " ") stopGrab(); });
 
 /* ---------- CPUの泥棒 ---------- */
 function bestDoorPath(t) {
@@ -825,10 +822,21 @@ function takeItem(t, it) {
   }
 }
 // スティックで自分の泥棒を動かす
+// ロッカー: 開いた空のロッカーの前で、ロッカーの方へスティックを倒すと中に入る(段ボールと同じで歩いて入る)。
+// 中にいて扉が開いていれば、外へ倒すと出る。閉まっている間は動けない
 function moveMe(t, dt) {
-  if (lockerOf(t)) return; // ロッカーの中では動けない(「出る」で出る)
-  const [dx, dy] = inputDir(), sp = THIEF_SPEED * speedRate(t) * boostRate(t) * dt;
+  const [dx, dy] = inputDir(), inL = lockerOf(t);
+  if (inL) {
+    if (inL.open && dx * (inL.fx - inL.x) + dy * (inL.fy - inL.y) > LOCKER_WALK) doLocker(t, "exit");
+    return;
+  }
+  const sp = THIEF_SPEED * speedRate(t) * boostRate(t) * dt;
   moveBy(t, dx * sp, dy * sp);
+  const [tx, ty] = tileOf(t), l = lockerAt(tx, ty);
+  if (!l || !l.open || occupant(l)) return;
+  const ux = l.x - l.fx, uy = l.y - l.fy; // 扉の前からロッカーへの向き
+  // ロッカーの方へ倒していて、ロッカーにくっつくくらい近づいたら入る
+  if (dx * ux + dy * uy > LOCKER_WALK && (t.x - tx - 0.5) * ux + (t.y - ty - 0.5) * uy > 0.1) doLocker(t, "enter");
 }
 // 泥棒を1フレーム動かす(トラップの効果つき)。自分で動かしている泥棒だけ
 function stepThief(t, dt, normalMove) {
@@ -852,11 +860,13 @@ function checkSpot(t) {
 
 /* ---------- ロッカー ----------
    G.lockers: [{ id, x, y, fx, fy(扉の前のマス), open: 開いているか, who: 中にいる泥棒のID, anim: 扉の開き具合 0〜1 }]
-   泥棒: 扉の前で「開ける」→「入る」→「閉める」で隠れる。中から「開ける」→「出る」(出たあと扉は開いたまま)
+   泥棒: 扉の前で「開ける」→ スティックで歩いて入る →「閉める」で隠れる。中から「開ける」→ 歩いて出る(扉は開いたまま)
+   ボタンは盗むボタンと同じ(開ける・閉める)。入る・出る(enter / exit)は歩いたとき と CPU が使う
    店長: 扉の前で「開ける」→ 中に泥棒がいたら捕まえる。開いたロッカーの中の泥棒は、扉の前に立つだけで捕まえる
    警察は開けない。1つのロッカーに入れるのは1人 */
 const LOCKER_HOLD = 0.8; // 自分で開け閉めしたあと、この秒数はネットの古い情報で上書きしない
-const LOCKER_LABEL = { open: "開ける", close: "閉める", enter: "入る", exit: "出る" };
+const LOCKER_LABEL = { open: "開ける", close: "閉める" };
+const LOCKER_WALK = 0.6; // スティックをロッカーの方へこれ以上まっすぐ倒すと入る・出る
 function makeLockers() { return LOCKERS.map(l => ({ ...l, open: false, who: null, anim: 0, hold: 0, wall: false })); }
 const lockerAt = (tx, ty) => G.lockers.find(l => l.fx === tx && l.fy === ty); // その場所が扉の前のロッカー
 const lockerOf = t => !!(G && G.lockers && t) && G.lockers.find(l => l.who === t.id) || null; // t が入っているロッカー
@@ -1061,7 +1071,7 @@ function startOnline(opts) {
   for (const id of ["start", "result", "lobby"]) $(id).classList.add("hidden");
   const prep = G.phase === "prep";
   $("hud").classList.toggle("hidden", prep);
-  $("grab").classList.toggle("hidden", role !== "thief" || prep);
+  $("grab").classList.toggle("hidden", prep);
   $("door").classList.toggle("hidden", role !== "thief" || G.me.in);
   $("prep").classList.toggle("hidden", !(prep && role === "boss"));
   if (prep && role === "boss") { startPan(); prepMsg(PREP_HELP); }
@@ -1093,14 +1103,14 @@ document.querySelectorAll("[data-enter]").forEach(btn => btn.addEventListener("p
 function stopOnline() {
   if (!G || !G.online) return;
   G = null; joy = null;
-  for (const id of ["hud", "grab", "result", "door", "prep", "itemBar", "banner", "watch", "act"]) $(id).classList.add("hidden");
+  for (const id of ["hud", "grab", "result", "door", "prep", "itemBar", "banner", "watch"]) $(id).classList.add("hidden");
 }
 
 // 結果画面を出す(html は名前などを入れる前に escapeHtml しておく)
 const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 function showResult(title, score, noteHtml, online) {
   G.phase = "end"; joy = null;
-  for (const id of ["hud", "grab", "door", "prep", "itemBar", "watch", "act"]) $(id).classList.add("hidden");
+  for (const id of ["hud", "grab", "door", "prep", "itemBar", "watch"]) $(id).classList.add("hidden");
   $("result").classList.remove("hidden");
   $("resTitle").textContent = title;
   $("resScore").textContent = score;
@@ -1367,6 +1377,8 @@ function updateHud() {
     const stolen = G.thieves.reduce((n, t) => n + t.bank, 0);
     a = "捕まえた"; b = `${G.boss.caught}/${G.thieves.length}人`;
     c = `盗まれた ${stolen}点`; d = "";
+    const la = btnLocker(G.boss);
+    label = `🗄️<br>${LOCKER_LABEL[la || "open"]}`; canGrab = !!la;
   } else {
     const m = me();
     a = "持ち出し"; b = m.bank + "点";
@@ -1376,12 +1388,13 @@ function updateHud() {
       c = "手持ち " + (m.carry.length ? m.carry.map(k => ITEMS[k].emoji).join("") + `(${carryP(m)}点)` : "なし");
       const lk = lockerOf(m);
       d = lk ? (lk.open ? "扉が開いてる！閉めないと丸見え" : "🗄️ ロッカーに隠れている") : `足の速さ ${Math.round(speedRate(m) * 100)}%`;
-      const it = nearestItem(m);
-      canGrab = !!it || !!m.grab;
+      const it = lk ? null : nearestItem(m), la = btnLocker(m);
+      canGrab = !!it || !!m.grab || !!la;
       const opening = it && it.type === "safe" && hasKey(m);
       label = m.grab ? (opening ? "開けてる…" : "盗んでる…")
         : opening ? `🔑 金庫を開ける<br>150点`
-        : it ? `${ITEMS[it.type].emoji} ${ITEMS[it.type].name}<br>${it.type === "key" ? "金庫が開く" : ITEMS[it.type].pts + "点"}` : "盗む";
+        : it ? `${ITEMS[it.type].emoji} ${ITEMS[it.type].name}<br>${it.type === "key" ? "金庫が開く" : ITEMS[it.type].pts + "点"}`
+        : la ? `🗄️<br>${LOCKER_LABEL[la]}` : "盗む";
     }
   }
   // 残りの泥棒(捕まっていない人)と、残りの品物(鍵は数えない)
@@ -1405,7 +1418,7 @@ function loop(now) {
   else update(dt);
   if (G && G.siren > 0) G.siren -= dt;
   if (G && G.lockers) updateLockers(dt);
-  renderItemBar(); renderWatch(); renderAct();
+  renderItemBar(); renderWatch();
   draw();
   updateHud();
   const m = me();

@@ -64,19 +64,6 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 }
 #grabLabel { position: relative; }
 
-/* ロッカーのボタン(盗むボタンの左。店長は右下) */
-#act {
-  position: fixed; right: 136px; bottom: calc(36px + env(safe-area-inset-bottom, 0px));
-  display: flex; flex-direction: column-reverse; gap: 8px;
-}
-#act.boss { right: 20px; }
-.act-btn {
-  width: 76px; height: 62px; border-radius: 16px;
-  border: 2px solid #8fb0cc; background: rgba(90, 140, 190, 0.3);
-  color: var(--fg); font: inherit; font-weight: 700; font-size: 14px; line-height: 1.2;
-  touch-action: manipulation;
-}
-
 .overlay {
   position: fixed; inset: 0; padding: 24px 20px;
   background: rgba(14, 12, 20, 0.94);
