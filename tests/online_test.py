@@ -28,7 +28,7 @@ with sync_playwright() as p:
     a, b, c = ph.open("A"), ph.open("B"), ph.open("C")
     a.click("#goOnline"); a.fill("#lbName", "みつる"); a.click("#lbCreate"); wait(a)
     code = a.inner_text("#lbRoomCode")
-    gp = f"rooms/gr-{code}/game"
+    gp = f"gr-rooms/{code}/game"
     for pg, n in ((b, "たろう"), (c, "はなこ<b>")):   # はなこ<b> = 名前に記号があっても大丈夫か
         pg.click("#goOnline"); pg.fill("#lbName", n); pg.fill("#lbCode", code); pg.click("#lbJoin"); wait(pg, 500)
     a.click("#lbStart"); wait(a, 700)
@@ -166,7 +166,7 @@ with sync_playwright() as p:
     a.screenshot(path=f"{SHOTS}/o4_result.png")
 
     a.click("#resLobby"); wait(a, 600)
-    check(get_at(gp) is None and not get_at(f"rooms/gr-{code}/meta/started"), "ロビーにもどすと試合データが消える")
+    check(get_at(gp) is None and not get_at(f"gr-rooms/{code}/meta/started"), "ロビーにもどすと試合データが消える")
     for n, pg in (("A", a), ("B", b), ("C", c)):
         check(pg.is_visible("#lbRoom") and not pg.is_visible("#result") and not pg.is_visible("#hud"), f"{n} は待合室に戻る")
 
@@ -194,12 +194,12 @@ with sync_playwright() as p:
     check(b.is_visible("#door"), "3試合目スタート")
     ph.disconnect("A"); wait(b, 900)
     check(b.is_visible("#lbRoom") and not b.is_visible("#hud") and not b.is_visible("#door"), "ホストが抜けたら試合は終わってロビーへ")
-    check(get_at(f"rooms/gr-{code}/meta/host") == "uid_B", "B がホストを引きつぐ")
+    check(get_at(f"gr-rooms/{code}/meta/host") == "uid_B", "B がホストを引きつぐ")
 
     # ---------- ③ラウンド回し: 3人で3ラウンド ----------
     e, f, g = ph.open("E"), ph.open("F"), ph.open("G")
     e.click("#goOnline"); e.fill("#lbName", "いち"); e.click("#lbCreate"); wait(e)
-    code2 = e.inner_text("#lbRoomCode"); rp = f"rooms/gr-{code2}"
+    code2 = e.inner_text("#lbRoomCode"); rp = f"gr-rooms/{code2}"
     for pg, n in ((f, "に"), (g, "さん")):
         pg.click("#goOnline"); pg.fill("#lbName", n); pg.fill("#lbCode", code2); pg.click("#lbJoin"); wait(pg, 500)
     e.click("#lbStart"); wait(e, 700)
@@ -242,7 +242,7 @@ with sync_playwright() as p:
     # ---------- トラップ・ショップ・コイン・アイテム ----------
     h, i_, j = ph.open("H"), ph.open("I"), ph.open("J")
     h.click("#goOnline"); h.fill("#lbName", "てんちょう"); h.click("#lbCreate"); wait(h)
-    code3 = h.inner_text("#lbRoomCode"); r3 = f"rooms/gr-{code3}"; g3 = r3 + "/game"
+    code3 = h.inner_text("#lbRoomCode"); r3 = f"gr-rooms/{code3}"; g3 = r3 + "/game"
     for pg, n in ((i_, "どろ1"), (j, "どろ2")):
         pg.click("#goOnline"); pg.fill("#lbName", n); pg.fill("#lbCode", code3); pg.click("#lbJoin"); wait(pg, 500)
     h.click("#lbStart"); wait(h, 800)
@@ -424,7 +424,7 @@ with sync_playwright() as p:
     # ---------- オンラインにCPUを入れる ----------
     q, r_ = ph.open("Q"), ph.open("R")
     q.click("#goOnline"); q.fill("#lbName", "ほすと"); q.click("#lbCreate"); wait(q)
-    code5 = q.inner_text("#lbRoomCode"); r5 = f"rooms/gr-{code5}"; g5 = r5 + "/game"
+    code5 = q.inner_text("#lbRoomCode"); r5 = f"gr-rooms/{code5}"; g5 = r5 + "/game"
     check(q.is_visible("#lbCpuBtns") and q.is_disabled("#lbStart"), "ホストにCPUボタン。1人だけではスタートできない")
     q.click("#lbCpuPlus"); wait(q, 300)
     check(get_at(r5 + "/meta/cpus") == 1 and q.is_enabled("#lbStart") and "2 / 8" in q.inner_text("#lbCount"), "人1人 + CPU1人でスタートできる")
@@ -576,7 +576,7 @@ with sync_playwright() as p:
     check(vault_ok and door_ok and gap_ok and floor_ok, f"金庫は金庫室、出入口から3マス以内なし、品物どうしは離れている、床の上(200回)")
     ra, rb = ph.open("RA", fixed=False), ph.open("RB", fixed=False)
     ra.click("#goOnline"); ra.fill("#lbName", "らん"); ra.click("#lbCreate"); wait(ra)
-    code6 = ra.inner_text("#lbRoomCode"); g6 = f"rooms/gr-{code6}/game"
+    code6 = ra.inner_text("#lbRoomCode"); g6 = f"gr-rooms/{code6}/game"
     rb.click("#goOnline"); rb.fill("#lbName", "だむ"); rb.fill("#lbCode", code6); rb.click("#lbJoin"); wait(rb, 500)
     ra.click("#lbStart"); wait(ra, 800)
     spots = get_at(g6 + "/spots") or {}

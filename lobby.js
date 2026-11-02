@@ -1,23 +1,22 @@
 /* ロビー(オンライン対戦の待合室)
    名前を入れる → ルームを作る(4桁のコード) or コードで参加 → 待合室 → ホストがスタート
-   ルームのデータは rooms/gr-1234 に置く:
+   ルームのデータは gr-rooms/1234 に置く(富豪大富豪の rooms とは別の場所):
      meta:    { host: ホストの人のID, started: 始まったか, created: 作った時刻, cpus: CPUの数 }
      players: { 人のID: { name: 名前, joinedAt: 入った時刻, online: つながっているか } }
    店長の順番は、入った順(joinedAt が小さい順)。 */
 import {
   db, auth, ref, get, set, update, remove, onValue,
   onDisconnect, serverTimestamp, runTransaction, signInAnonymously
-} from "./firebase.js";
-import { sync as syncGame, makeMatch } from "./online.js";
+} from "./firebase.js?v=1";
+import { sync as syncGame, makeMatch } from "./online.js?v=1";
 
-const PREFIX = "gr-";   // 富豪大富豪のルームとぶつからないように頭につける
 const MAX_PLAYERS = 8;
 const MIN_PLAYERS = 2;
 const NAME_KEY = "grab_name"; // スマホが覚えておく名前
 const ROOM_KEY = "grab_room"; // 最後に入っていたルーム(ページを開き直したら戻れるように)
 
 const $ = id => document.getElementById(id);
-const roomPath = code => "rooms/" + PREFIX + code;
+const roomPath = code => "gr-rooms/" + code;
 const store = {
   get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* 覚えられなくても遊べる */ } },

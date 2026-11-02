@@ -1,8 +1,8 @@
 /* オンライン対戦の通信係
-   全体の流れ(rooms/gr-1234/match): 全員が1回ずつ店長をやり、合計点で順位を決める
+   全体の流れ(gr-rooms/1234/match): 全員が1回ずつ店長をやり、合計点で順位を決める
      order:  店長の順番(入った順の人のID。CPUは入らない)、names: { 人のID: 名前 }、cpus: CPUのID ["cpu1", …]
      round:  今が何ラウンド目か(0から)、totals: { 人のID: 合計点 }、coins: { 人のID: コイン }
-   1ラウンドのデータ(rooms/gr-1234/game):
+   1ラウンドのデータ(gr-rooms/1234/game):
      round:   ラウンドごとの番号(ラウンドが変わるたびに変わる)、no: 何ラウンド目か
      boss:    店長の人のID(match.order[no])
      players: { 人のID: { name, i: 入った順, cpu: CPUなら true } } … この試合に出ている人(CPUは泥棒だけ)
@@ -22,7 +22,7 @@
      scores:  { 人のID: このラウンドの点数 }
    自分の pos は自分だけが書く。捕まえた記録は店長、時間と終わりはホストが書く。
    CPUの泥棒はホストのスマホが動かして、pos も書く(警察と同じ)。CPUは店長をやらず、コインもない。 */
-import { db, ref, set, update, runTransaction } from "./firebase.js";
+import { db, ref, set, update, runTransaction } from "./firebase.js?v=1";
 
 const SEND_MS = 100;   // 自分の位置を送る間隔(1秒に10回)
 const HOST_MS = 250;   // ホストが時間と終わりをチェックする間隔
@@ -33,7 +33,7 @@ let S = null;          // 今の試合 { code, uid, round, … }
 let room = null;       // ルームの最新データ
 let sendTimer = null, hostTimer = null;
 
-const roomPathOf = () => "rooms/gr-" + S.code;
+const roomPathOf = () => "gr-rooms/" + S.code;
 const gamePath = () => roomPathOf() + "/game";
 const isHost = () => !!(S && room && room.meta && room.meta.host === S.uid);
 const itemIds = game => Object.keys(game.items || {}).filter(k => game.items[k]).map(k => +k.slice(1));
@@ -281,7 +281,7 @@ async function caught(t, by) {
 // コインを変える(トランザクションで。f が undefined を返したらやめる)
 async function addCoins(s, id, f) {
   try {
-    const res = await runTransaction(ref(db, "rooms/gr-" + s.code + "/match/coins/" + id), v => f(v || 0));
+    const res = await runTransaction(ref(db, "gr-rooms/" + s.code + "/match/coins/" + id), v => f(v || 0));
     return !!res.committed;
   } catch (e) { return false; }
 }
@@ -314,7 +314,7 @@ async function trap(k) {
     const res = await runTransaction(ref(db, gamePath() + "/traps/" + k.id), v => (v ? null : undefined));
     if (!res.committed) return false;
   } catch (e) { return false; }
-  const base = "rooms/gr-" + s.code + "/game/";
+  const base = "gr-rooms/" + s.code + "/game/";
   if (k.type === "buzzer") update(ref(db, base + "alerts"), { [k.id]: { x: k.x + 0.5, y: k.y + 0.5 } }).catch(() => {});
   if (k.type === "door") update(ref(db, base + "closed"), { [k.id]: { x: k.x, y: k.y, until: Math.floor(G.time) - GR.DOOR_SEC } }).catch(() => {});
   return true;
@@ -326,7 +326,7 @@ async function buy(kind) {
   if (!s || !d) return false;
   if (!(await addCoins(s, s.uid, v => (v >= d.price ? v - d.price : undefined)))) return false;
   try {
-    await runTransaction(ref(db, "rooms/gr-" + s.code + "/game/gear/" + s.uid + "/" + kind), v => (v || 0) + 1);
+    await runTransaction(ref(db, "gr-rooms/" + s.code + "/game/gear/" + s.uid + "/" + kind), v => (v || 0) + 1);
     return true;
   } catch (e) { return false; }
 }
@@ -335,7 +335,7 @@ async function refund(kind) {
   const s = S, d = GR.TRAPS[kind];
   if (!s || !d) return false;
   try {
-    const res = await runTransaction(ref(db, "rooms/gr-" + s.code + "/game/gear/" + s.uid + "/" + kind), v => (v > 0 ? v - 1 : undefined));
+    const res = await runTransaction(ref(db, "gr-rooms/" + s.code + "/game/gear/" + s.uid + "/" + kind), v => (v > 0 ? v - 1 : undefined));
     if (!res.committed) return false;
   } catch (e) { return false; }
   return addCoins(s, s.uid, v => v + d.price);

@@ -25,6 +25,10 @@ Muddy's Games のゲームの1つ。
 - オンライン化は富豪大富豪と同じく Firebase Realtime Database(無料プラン)+ 匿名認証、ホスト方式の予定。
 - 位置はすべて「マス」単位(1マス = 1.0)。調整用の数字は main.js の上の方(動き・警察・店長の点数)と traps.js の上の方(トラップ・アイテム・コインの値段など)にまとめてある。
 - ファイル: index.html / style.css / traps.js(トラップ・アイテム・ショップ。main.js より先に読む) / main.js(ゲーム本体・練習) / firebase.js / lobby.js(ロビー) / online.js(オンラインの通信係)
+- **Firebase の場所は `gr-rooms/コード`**(2026-11-02 に `rooms/gr-コード` から引っ越し)。ルールは `muddys-notes` の `firebase/fugo-daifugo_rules.json` の `gr-rooms`
+  (部屋を作る人と部屋の中の人だけが書ける、自分の `players` は自分だけ、名前は20文字まで、コードは数字4桁)。書く場所を足したらルールと合うか確かめる
+- キャッシュよけ: 読むファイル全部に `?v=番号`(いまは v=1)。**上げるたびに `node tools/set-version.mjs 新しい番号`**(番号を全部そろえる道具)
+- テストを動かすとき: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`
 - 変えたら必ず3つのテストを通す: `node tests/map-check.js`、`python tests/lobby_test.py . <画像フォルダ>`、`python tests/online_test.py . <画像フォルダ>`
 - 色: 背景は暗め、文字 #f2f4ff、強調 #ffcc33。
 
@@ -42,17 +46,17 @@ Muddy's Games のゲームの1つ。
   - [x] ①ロビー: 名前(スマホが覚える)、ルーム作成(4桁)・参加、待合室(入った順 = 店長の順番)、ホストだけスタート。
     ホストが切れたら次に入った人が引きつぐ。スタート時に切断中の人は外す。最後の1人が出たらルームを消す。
     スタート後は「準備中」まで(ホストは「ロビーにもどす」)。
-    ファイル: firebase.js(つなぐ準備、fugo-daifugo を使う)、lobby.js。データは rooms/gr-コード
+    ファイル: firebase.js(つなぐ準備、fugo-daifugo を使う)、lobby.js。データは gr-rooms/コード
     テスト: `python tests/lobby_test.py . <画像フォルダ>`(にせ Firebase でスマホ数台ぶん動かす。playwright が必要。にせ Firebase は tests/fakefb.py)
   - [x] ②一緒に動く: 泥棒は入り口を選んでから入る。
     自分の位置・手持ち・点数を1秒に10回送り、ほかの人はなめらかに補間して表示。CPUはなし。
     品物はトランザクションで先に取った人だけ成功。捕まえた判定は店長のスマホ(距離0.8、隠れていたら同じマス)。
     時間(1秒ごと)と終わり(時間切れ・全員脱落・全部盗まれた・店長が抜けた)はホストが決める。
     抜けた泥棒は脱落あつかい。開き直すと試合の続きから。結果画面 → ホストが「ロビーにもどす」。
-    ファイル: online.js(通信係)。main.js の updateOnline / startOnline と window.GR でつながる。データは rooms/gr-コード/game
+    ファイル: online.js(通信係)。main.js の updateOnline / startOnline と window.GR でつながる。データは gr-rooms/コード/game
     テスト: `python tests/online_test.py . <画像フォルダ>`
   - [x] ③ラウンド回し: 全員が入った順に1回ずつ店長(抜けた人の番はとばす)。結果画面にラウンドと合計の順位、ホストが「次のラウンドへ」。
-    店長の点数(仮) = 捕まえた人数×50 + 守った点数×0.25。データは rooms/gr-コード/match(order, names, round, totals, coins)
+    店長の点数(仮) = 捕まえた人数×50 + 守った点数×0.25。データは gr-rooms/コード/match(order, names, round, totals, coins)
 - [x] 警察CPU(練習とオンライン): 上限は人数−2(最大4)。捕まるたび+1、1分後から30秒ごと+1。入り口・出口の近くをうろつく。
   オンラインはホストが動かす。caught の値が "police"。店長の「捕まえた人数」には入らない
 - [x] トラップ・ショップ・コイン・アイテム(値段と数字は仮。traps.js の上の方)
@@ -80,7 +84,7 @@ Muddy's Games のゲームの1つ。
     入る・出るのボタンはない(enter / exit は歩いたときと CPU が使う)
   - 店長は扉の前で「開ける」→ 中にいたら捕まえる。開いたロッカーの中の泥棒は扉の前に立つだけで捕まる(canCatch)。警察は開けない
   - CPU泥棒は逃げるときロッカーにも隠れる(ai.seq で少しずつ)。CPU店長は見回りでときどき(BOSS_CHECK_RATE)、見失った場所の近くも調べる
-  - オンライン: rooms/gr-コード/game/lockers/L0 = { o: 開いているか, w: 中の人 }。入るのはトランザクション。自分で動かした直後(LOCKER_HOLD)は上書きしない
+  - オンライン: gr-rooms/コード/game/lockers/L0 = { o: 開いているか, w: 中の人 }。入るのはトランザクション。自分で動かした直後(LOCKER_HOLD)は上書きしない
   - 品物は毎ラウンドランダム(randomItemSpots): 金庫は金庫室だけ、出入口から3マス以内なし、品物どうし離す。オンラインはホストが game/spots に書く
   - 開ききった扉は壁(l.wall)。「前のマス」と「横のマス(sx, sy)」の間をふさぐ。扉は横のマスが壁でない側に開く。
     開け閉めの途中はぶつからない。扉のところに人がいたら、どいてから壁になる。扉はどちら側からでも「閉める」を押せる(sideDoors)

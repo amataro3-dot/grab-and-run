@@ -1,6 +1,6 @@
 /* Firebase(ネットでデータをやりとりする場所)につなぐ準備
-   富豪大富豪と同じ fugo-daifugo を使う。GRAB & RUN! のルームは rooms/gr-1234 のように
-   頭に gr- をつけた場所に置くので、富豪大富豪のルームとはぶつからない。 */
+   富豪大富豪と同じ fugo-daifugo を使う。GRAB & RUN! のルームは gr-rooms/1234 に置く
+   (富豪大富豪は rooms/1234。場所が別なので、ぶつからない)。 */
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
   getDatabase, ref, get, set, update, remove, onValue,
