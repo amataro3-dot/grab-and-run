@@ -54,6 +54,7 @@ def handler_for(uid):
 
 FAKE = {
 "firebase-app.js": "export function initializeApp(){return {}}",
+"firebase-app-check.js": "export function initializeAppCheck(){return {}}\nexport class ReCaptchaEnterpriseProvider{constructor(k){this.k=k}}",
 "firebase-auth.js": """export function getAuth(){return {}}
 export async function signInAnonymously(){return {user:{uid: await window.__db({op:'uid'})}}}""",
 "firebase-database.js": """

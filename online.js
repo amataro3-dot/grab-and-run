@@ -22,7 +22,7 @@
      scores:  { 人のID: このラウンドの点数 }
    自分の pos は自分だけが書く。捕まえた記録は店長、時間と終わりはホストが書く。
    CPUの泥棒はホストのスマホが動かして、pos も書く(警察と同じ)。CPUは店長をやらず、コインもない。 */
-import { db, ref, set, update, runTransaction } from "./firebase.js?v=1";
+import { db, ref, set, update, runTransaction } from "./firebase.js?v=2";
 
 const SEND_MS = 100;   // 自分の位置を送る間隔(1秒に10回)
 const HOST_MS = 250;   // ホストが時間と終わりをチェックする間隔

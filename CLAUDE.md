@@ -27,7 +27,8 @@ Muddy's Games のゲームの1つ。
 - ファイル: index.html / style.css / traps.js(トラップ・アイテム・ショップ。main.js より先に読む) / main.js(ゲーム本体・練習) / firebase.js / lobby.js(ロビー) / online.js(オンラインの通信係)
 - **Firebase の場所は `gr-rooms/コード`**(2026-11-02 に `rooms/gr-コード` から引っ越し)。ルールは `muddys-notes` の `firebase/fugo-daifugo_rules.json` の `gr-rooms`
   (部屋を作る人と部屋の中の人だけが書ける、自分の `players` は自分だけ、名前は20文字まで、コードは数字4桁)。書く場所を足したらルールと合うか確かめる
-- キャッシュよけ: 読むファイル全部に `?v=番号`(いまは v=1)。**上げるたびに `node tools/set-version.mjs 新しい番号`**(番号を全部そろえる道具)
+- キャッシュよけ: 読むファイル全部に `?v=番号`(いまは v=2)。**上げるたびに `node tools/set-version.mjs 新しい番号`**(番号を全部そろえる道具)
+- App Check(reCAPTCHA Enterprise、富豪大富豪と同じキー)を `firebase.js` で始める。テストのにせ Firebase にも `firebase-app-check.js` のにせものがある
 - テストを動かすとき: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`
 - 変えたら必ず3つのテストを通す: `node tests/map-check.js`、`python tests/lobby_test.py . <画像フォルダ>`、`python tests/online_test.py . <画像フォルダ>`
 - 色: 背景は暗め、文字 #f2f4ff、強調 #ffcc33。
