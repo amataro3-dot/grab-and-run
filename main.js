@@ -1430,6 +1430,21 @@ requestAnimationFrame(loop);
 document.querySelectorAll("[data-role]").forEach(btn => btn.addEventListener("pointerdown", e => {
   e.preventDefault(); newGame(btn.dataset.role);
 }));
+/* 戻るボタンの確認(backguard.js)。押したときの画面で決める:
+   最初の画面・ルームに入る画面 → 「ホームに戻りますか？」 / 待合室・オンラインの結果 → 「ルームから出ますか？」
+   試合中 → 「ゲームをやめますか？」(練習は最初の画面へ、オンラインはルームを出る) */
+if (window.BackGuard) BackGuard.use(() => {
+  const vis = id => !$(id).classList.contains("hidden");
+  const leaveRoom = () => $("lbLeave").click();
+  if (vis("lobby")) return vis("lbRoom") ? ["room", leaveRoom] : ["home"];
+  if (G && G.online) return [vis("result") ? "room" : "game", leaveRoom];
+  if (G && G.phase !== "end" && !vis("start")) return ["game", () => {
+    G = null; joy = null; lastHud = "";
+    for (const id of ["hud", "grab", "result", "door", "prep", "itemBar", "banner", "watch"]) $(id).classList.add("hidden");
+    $("start").classList.remove("hidden");
+  }];
+  return ["home"];
+});
 $("again").addEventListener("pointerdown", e => {
   e.preventDefault();
   G = null; lastHud = "";

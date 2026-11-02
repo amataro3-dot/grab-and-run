@@ -27,7 +27,7 @@ Muddy's Games のゲームの1つ。
 - ファイル: index.html / style.css / traps.js(トラップ・アイテム・ショップ。main.js より先に読む) / main.js(ゲーム本体・練習) / firebase.js / lobby.js(ロビー) / online.js(オンラインの通信係)
 - **Firebase の場所は `gr-rooms/コード`**(2026-11-02 に `rooms/gr-コード` から引っ越し)。ルールは `muddys-notes` の `firebase/fugo-daifugo_rules.json` の `gr-rooms`
   (部屋を作る人と部屋の中の人だけが書ける、自分の `players` は自分だけ、名前は20文字まで、コードは数字4桁)。書く場所を足したらルールと合うか確かめる
-- キャッシュよけ: 読むファイル全部に `?v=番号`(いまは v=3)。**上げるたびに `node tools/set-version.mjs 新しい番号`**(番号を全部そろえる道具)
+- キャッシュよけ: 読むファイル全部に `?v=番号`(いまは v=4)。**上げるたびに `node tools/set-version.mjs 新しい番号`**(番号を全部そろえる道具)
 - App Check(reCAPTCHA Enterprise、富豪大富豪と同じキー)を `firebase.js` で始める。テストのにせ Firebase にも `firebase-app-check.js` のにせものがある
 - テストを動かすとき: `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`
 - 変えたら必ず3つのテストを通す: `node tests/map-check.js`、`python tests/lobby_test.py . <画像フォルダ>`、`python tests/online_test.py . <画像フォルダ>`
@@ -94,3 +94,4 @@ Muddy's Games のゲームの1つ。
   - トラップ「ロッカーの鍵」はなくした
   - テストは品物を決まった場所に置く(fakefb の Phones.open が window.__fixedItems を立てる。fixed=False でランダム)
 - [ ] 次の候補: トラップ・アイテムの案、数字の調整(作る人がスマホで遊んでから)、別のマップ
+- **戻るボタンの確認(2026-11-02〜)**: `backguard.js` は Muddy's Games の全ゲーム共通の同じファイル(直すときは全ゲームのものをそろえる)。画面が変わるたびに `BackGuard.set('home'|'room'|'game', はいのときの動き)` を呼ぶ(または `BackGuard.use(関数)` で押したときに決める)。最初の画面「ホームに戻りますか？」→サイトのトップ、ルームの中「ルームから出ますか？」、ゲーム中「ゲームをやめますか？」
